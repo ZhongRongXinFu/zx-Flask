@@ -1,0 +1,12 @@
+flask
+flask-cors
+requests
+openai
+mysql-connector-python
+argon2-cffi
+tencentcloud-sdk-python
+tencentcloud-sdk-python-common
+mysql-connector-python
+pymysql
+cryptography
+pff2image

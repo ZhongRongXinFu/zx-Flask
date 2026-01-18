@@ -1,0 +1,24 @@
+DB_HOST = "localhost"
+DB_USER = "api"
+DB_PASSWORD = "cZ6aF0rO0gA0sF2fV5cC1cO0"
+DB_DATABASE = "zhongrong"
+DB_PORT = 3306
+
+WX_APP_ID = 'wx276d3b776e47c682'
+WX_APP_SECRET = '5654bdfd979bef4f4be46715f572f5ff'
+WX_API_URL = 'https://api.weixin.qq.com/sns/jscode2session'
+WX_LOGIN_APP_ID = 'wx61848022937f1de5'
+WX_LOGIN_APP_SECRET = '6632cde4656f1f7a3af37092263a3564'
+
+
+AI_DEEPSEEK_API_KEY = "sk-cb536e5e448147d1b28c010b2ab8280f"
+AI_TENCENT_SECRET_ID = "AKIDU3pW7awLhsukNrAKI4eTG3LYgpu8FAtQ"
+AI_TENCENT_SECRET_KEY = "Pm398FByb5UkrpcGl6QqaJwbGnAOgqri"
+
+
+# AI_HUOSHAN_API_KEY = "8cd17edc-4267-4864-a93b-798611626336"  # personal
+AI_HUOSHAN_API_KEY = "6a401bfa-6e6f-44ad-a5b6-e09fe262f592" #company
+
+
+UPLOAD_FILE_DIR = "./static/"
+PRODUCT_IMAGE_DIR  = "./static/"
