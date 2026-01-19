@@ -63,31 +63,10 @@ def add_components():
             if "images" not in data_obj or not isinstance(data_obj["images"], list):
                 return jsonify({"code": 400, "message": "data 中缺少 images 数组"}), 400
             
-            whitelist = []
-            # 遍历所有图片，上传并替换 URL
+            # 验证所有图片都有 URL
             for i, image_info in enumerate(data_obj["images"]):
-                image_id = image_info.get("id")
-                if not image_id:
-                    return jsonify({"code": 400, "message": f"图片 {i+1} 缺少 id"}), 400
-                
-                # 获取对应的文件
-                file = request.files.get(f"image_{image_id-1}")
-                if not file or file.filename == "":
-                    return jsonify({"code": 400, "message": f"缺少 image_{image_id-1} 文件"}), 400
-                
-                # 保存文件
-                ext = file.filename.rsplit('.', 1)[-1] if '.' in file.filename else 'jpg'
-                new_filename = f"{image_id}.{ext}"
-                save_path = os.path.join(os.path.expanduser(PRODUCT_IMAGE_DIR), key, new_filename)
-                
-                # 确保目录存在
-                os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                file.save(save_path)
-                
-                # 替换 data 中的 URL
-                new_url = f"http://192.168.196.47:8000/static/{key}/{new_filename}"
-                data_obj["images"][i]["url"] = new_url
-                whitelist.append(new_filename)
+                if not image_info.get("url"):
+                    return jsonify({"code": 400, "message": f"图片 {i+1} 缺少 url"}), 400
             
             # 更新 metadata 中的最后修改时间
             if "metadata" in data_obj:
@@ -95,11 +74,6 @@ def add_components():
             
             # 将更新后的 data_obj 转回 JSON 字符串
             data = json.dumps(data_obj)
-
-            for filename in os.listdir(os.path.join(os.path.expanduser(PRODUCT_IMAGE_DIR), key)):
-                file_path = os.path.join(os.path.join(os.path.expanduser(PRODUCT_IMAGE_DIR), key), filename)
-                if os.path.isfile(file_path) and filename not in whitelist:
-                    os.remove(file_path)
                 
         case _:
             return jsonify({"code": 400, "message": "错误的key参数"}), 400

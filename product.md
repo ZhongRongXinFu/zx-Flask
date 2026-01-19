@@ -56,7 +56,7 @@ curl -X GET "http://localhost:8000/product/list/miniprogram/"
 # 管理后台列表（第2页，每页20条，按价格升序）
 curl -X GET "http://localhost:8000/product/list/manager/?page=2&range=20&sort_by=price&order=asc" \
   -H "Authorization: Bearer <admin_token>"
-
+dy
 # 管理后台组件：筛选在线 + 按标签模糊 + 价格区间
 curl -X GET "http://localhost:8000/product/list/manager-component/?tag=AI&price_min=100&price_max=999" \
   -H "Authorization: Bearer <admin_token>"
