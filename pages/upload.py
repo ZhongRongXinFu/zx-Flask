@@ -55,7 +55,7 @@ def validate_file(file):
     return True, (file_type, ext)
 
 
-def _save_file_to_path(file, absolute_path, base_dir, category, use_filename=None):
+def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None, use_filename=None):
     """
     内部函数：保存文件到指定路径
     
@@ -64,7 +64,8 @@ def _save_file_to_path(file, absolute_path, base_dir, category, use_filename=Non
         - absolute_path: 绝对路径
         - base_dir: 基础目录
         - category: 分类
-        - use_filename: 指定的文件名（包括扩展名），如果不提供则自动生成
+        - subcategory: 二级分类（可选）
+        - use_filename: 指定的文件名（不包括扩展名），扩展名将使用原始文件的扩展名。如果不提供则自动生成 UUID
     
     返回:
         - success: 是否成功
@@ -80,14 +81,17 @@ def _save_file_to_path(file, absolute_path, base_dir, category, use_filename=Non
     
     # 确定文件名
     if use_filename:
-        # 使用指定的文件名（完整文件名）
-        unique_filename = use_filename
+        # 使用指定的文件名（不包括扩展名，扩展名使用原始文件的扩展名）
+        unique_filename = f"{use_filename}.{ext}"
     else:
         # 自动生成 UUID
         unique_filename = f"{uuid.uuid4().hex}.{ext}"
     
     # 构建保存路径
-    relative_path = os.path.join(category, unique_filename)
+    if subcategory:
+        relative_path = os.path.join(category, subcategory, unique_filename)
+    else:
+        relative_path = os.path.join(category, unique_filename)
     absolute_path = os.path.join(base_dir, relative_path)
     
     # 确保目录存在
@@ -133,7 +137,8 @@ def upload_file():
     参数:
         - file: 要上传的文件（通过 multipart/form-data）
         - category: 文件分类（可选），如 'avatar', 'product', 'document' 等，用于组织存储目录
-        - filename: 自定义文件名（可选），用于指定文件名（包括扩展名）。如果不提供，将自动生成 UUID
+        - subcategory: 二级分类（可选），用于在 category 下创建子目录
+        - filename: 自定义文件名（可选），不包含扩展名，扩展名使用原始文件的扩展名
     
     返回:
         {
@@ -159,7 +164,14 @@ def upload_file():
             POST /upload/
             file=<文件>
             category=product
-            filename=my-product.jpg
+            filename=my-product
+        
+        3. 使用二级目录:
+            POST /upload/
+            file=<文件>
+            category=product
+            subcategory=electronics
+            filename=item-001
     """
     # 获取上传的文件
     if 'file' not in request.files:
@@ -167,10 +179,11 @@ def upload_file():
     
     file = request.files['file']
     category = request.form.get('category', 'uploads')  # 默认分类为 uploads
+    subcategory = request.form.get('subcategory')  # 可选的二级分类
     custom_filename = request.form.get('filename')  # 可选的自定义文件名
     
     base_dir = os.path.expanduser(UPLOAD_FILE_DIR)
-    success, result = _save_file_to_path(file, None, base_dir, category, use_filename=custom_filename)
+    success, result = _save_file_to_path(file, None, base_dir, category, subcategory=subcategory, use_filename=custom_filename)
     
     if not success:
         return jsonify({"code": 400, "message": result}), 400
@@ -191,8 +204,9 @@ def upload_files_batch():
     参数:
         - files: 要上传的文件列表（通过 multipart/form-data）
         - category: 文件分类（可选）
-        - filenames: JSON 数组，对应每个文件的自定义文件名（可选）
-          格式: ["file1.jpg", "file2.png", "file3.jpg"] 或 "{\"0\": \"file1.jpg\", \"1\": \"file2.png\"}"
+        - subcategory: 二级分类（可选），用于在 category 下创建子目录
+        - filenames: JSON 数组或对象，对应每个文件的自定义文件名（可选）
+          格式: ["file1", "file2", "file3"] 或 "{\"0\": \"file1\", \"1\": \"file2\"}"
     
     返回:
         {
@@ -214,13 +228,21 @@ def upload_files_batch():
             POST /upload/batch/
             files=<多个文件>
             category=product
-            filenames=["product1.jpg", "product2.png", "product3.jpg"]
+            filenames=["product1", "product2", "product3"]
+        
+        3. 使用二级目录:
+            POST /upload/batch/
+            files=<多个文件>
+            category=product
+            subcategory=electronics
+            filenames=["item1", "item2", "item3"]
     """
     if 'files' not in request.files:
         return jsonify({"code": 400, "message": "请选择要上传的文件"}), 400
     
     files = request.files.getlist('files')
     category = request.form.get('category', 'uploads')
+    subcategory = request.form.get('subcategory')  # 可选的二级分类
     filenames_str = request.form.get('filenames')
     
     if not files:
@@ -248,7 +270,7 @@ def upload_files_batch():
         # 获取该文件的自定义文件名（如果有）
         custom_filename = filenames.get(str(idx)) or filenames.get(idx)
         
-        success, result = _save_file_to_path(file, None, base_dir, category, use_filename=custom_filename)
+        success, result = _save_file_to_path(file, None, base_dir, category, subcategory=subcategory, use_filename=custom_filename)
         
         if success:
             success_list.append(result)

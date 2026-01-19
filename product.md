@@ -471,7 +471,7 @@ curl -X GET http://localhost:8000/dynamic_components/get/?key=title
 curl -X GET http://localhost:8000/dynamic_components/get/?key=swiper
 ```
 
-### 返回数据类型
+### 返回数据类型    
 
 #### 标题组件（200）
 ```json
