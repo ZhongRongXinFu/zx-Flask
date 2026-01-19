@@ -55,7 +55,7 @@ def validate_file(file):
     return True, (file_type, ext)
 
 
-def _save_file_to_path(file, absolute_path, base_dir, category, use_uuid=None):
+def _save_file_to_path(file, absolute_path, base_dir, category, use_filename=None):
     """
     内部函数：保存文件到指定路径
     
@@ -64,7 +64,7 @@ def _save_file_to_path(file, absolute_path, base_dir, category, use_uuid=None):
         - absolute_path: 绝对路径
         - base_dir: 基础目录
         - category: 分类
-        - use_uuid: 是否使用指定的 UUID 作为文件名
+        - use_filename: 指定的文件名（包括扩展名），如果不提供则自动生成
     
     返回:
         - success: 是否成功
@@ -79,9 +79,9 @@ def _save_file_to_path(file, absolute_path, base_dir, category, use_uuid=None):
     original_filename = file.filename
     
     # 确定文件名
-    if use_uuid:
-        # 使用指定的 UUID
-        unique_filename = f"{use_uuid}.{ext}"
+    if use_filename:
+        # 使用指定的文件名（完整文件名）
+        unique_filename = use_filename
     else:
         # 自动生成 UUID
         unique_filename = f"{uuid.uuid4().hex}.{ext}"
@@ -133,7 +133,7 @@ def upload_file():
     参数:
         - file: 要上传的文件（通过 multipart/form-data）
         - category: 文件分类（可选），如 'avatar', 'product', 'document' 等，用于组织存储目录
-        - file_uuid: 自定义文件名（可选），用于指定唯一的文件路径。如果不提供，将自动生成 UUID
+        - filename: 自定义文件名（可选），用于指定文件名（包括扩展名）。如果不提供，将自动生成 UUID
     
     返回:
         {
@@ -155,11 +155,11 @@ def upload_file():
             file=<文件>
             category=product
         
-        2. 指定唯一路径:
+        2. 指定文件名:
             POST /upload/
             file=<文件>
             category=product
-            file_uuid=550e8400-e29b-41d4-a716-446655440000
+            filename=my-product.jpg
     """
     # 获取上传的文件
     if 'file' not in request.files:
@@ -167,10 +167,10 @@ def upload_file():
     
     file = request.files['file']
     category = request.form.get('category', 'uploads')  # 默认分类为 uploads
-    file_uuid = request.form.get('file_uuid')  # 可选的 UUID
+    custom_filename = request.form.get('filename')  # 可选的自定义文件名
     
     base_dir = os.path.expanduser(UPLOAD_FILE_DIR)
-    success, result = _save_file_to_path(file, None, base_dir, category, use_uuid=file_uuid)
+    success, result = _save_file_to_path(file, None, base_dir, category, use_filename=custom_filename)
     
     if not success:
         return jsonify({"code": 400, "message": result}), 400
@@ -191,8 +191,8 @@ def upload_files_batch():
     参数:
         - files: 要上传的文件列表（通过 multipart/form-data）
         - category: 文件分类（可选）
-        - file_uuids: JSON 数组，对应每个文件的自定义 UUID（可选）
-          格式: ["uuid1", "uuid2", "uuid3"] 或 "{\"0\": \"uuid1\", \"1\": \"uuid2\"}"
+        - filenames: JSON 数组，对应每个文件的自定义文件名（可选）
+          格式: ["file1.jpg", "file2.png", "file3.jpg"] 或 "{\"0\": \"file1.jpg\", \"1\": \"file2.png\"}"
     
     返回:
         {
@@ -210,45 +210,45 @@ def upload_files_batch():
             files=<多个文件>
             category=product
         
-        2. 指定每个文件的 UUID:
+        2. 指定每个文件的文件名:
             POST /upload/batch/
             files=<多个文件>
             category=product
-            file_uuids=["uuid1", "uuid2", "uuid3"]
+            filenames=["product1.jpg", "product2.png", "product3.jpg"]
     """
     if 'files' not in request.files:
         return jsonify({"code": 400, "message": "请选择要上传的文件"}), 400
     
     files = request.files.getlist('files')
     category = request.form.get('category', 'uploads')
-    file_uuids_str = request.form.get('file_uuids')
+    filenames_str = request.form.get('filenames')
     
     if not files:
         return jsonify({"code": 400, "message": "未找到任何文件"}), 400
     
-    # 解析文件 UUID 列表
-    file_uuids = {}
-    if file_uuids_str:
+    # 解析文件名列表
+    filenames = {}
+    if filenames_str:
         try:
             import json
-            uuids_data = json.loads(file_uuids_str)
+            filenames_data = json.loads(filenames_str)
             # 支持两种格式：列表或字典
-            if isinstance(uuids_data, list):
-                file_uuids = {i: uuid for i, uuid in enumerate(uuids_data)}
-            elif isinstance(uuids_data, dict):
-                file_uuids = uuids_data
+            if isinstance(filenames_data, list):
+                filenames = {i: filename for i, filename in enumerate(filenames_data)}
+            elif isinstance(filenames_data, dict):
+                filenames = filenames_data
         except json.JSONDecodeError:
-            return jsonify({"code": 400, "message": "file_uuids 格式错误，应为 JSON 数组或对象"}), 400
+            return jsonify({"code": 400, "message": "filenames 格式错误，应为 JSON 数组或对象"}), 400
     
     success_list = []
     failed_list = []
     base_dir = os.path.expanduser(UPLOAD_FILE_DIR)
     
     for idx, file in enumerate(files):
-        # 获取该文件的 UUID（如果有）
-        file_uuid = file_uuids.get(str(idx)) or file_uuids.get(idx)
+        # 获取该文件的自定义文件名（如果有）
+        custom_filename = filenames.get(str(idx)) or filenames.get(idx)
         
-        success, result = _save_file_to_path(file, None, base_dir, category, use_uuid=file_uuid)
+        success, result = _save_file_to_path(file, None, base_dir, category, use_filename=custom_filename)
         
         if success:
             success_list.append(result)
