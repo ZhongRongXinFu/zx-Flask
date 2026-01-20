@@ -6,8 +6,10 @@ from settings import AI_HUOSHAN_API_KEY
 import os, shutil, base64, mimetypes
 import time
 import json
+from typing import Optional
 from openai import OpenAI
 from utils.ai.pdfmaker import submit_convert, query_task, OFFICE_EXTS
+from utils.ai.usage_tracker import AIUsageTracker
 
 client = OpenAI(
     base_url='https://ark.cn-beijing.volces.com/api/v3',
@@ -72,7 +74,7 @@ def convert_office_to_pdf_sync(file_path: str, timeout_sec: int = 300, poll_inte
         time.sleep(poll_interval)
 
 
-def chat(messages=None, prompt=None, think="disabled", files=None):
+def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Optional[str] = None, conversation_id: Optional[str] = None):
     """
     Doubao 对话函数，支持对话历史和多文件上传
     
@@ -82,6 +84,8 @@ def chat(messages=None, prompt=None, think="disabled", files=None):
         prompt: 当前用户输入（如果 messages 为空则使用此参数）
         think: 思维链模式 "enabled"/"disabled"
         files: 文件路径列表（支持图片和文档）
+        user_id: 用户ID（用于记录统计）
+        conversation_id: 会话ID（用于记录统计）
     
     Yields:
         str: 流式输出的文本片段
@@ -170,7 +174,7 @@ def chat(messages=None, prompt=None, think="disabled", files=None):
     
     # 调用 API
     response = client.responses.create(
-        model="doubao-seed-1-6-251015",
+        model="doubao-seed-1-8-251228",
         input=input_array,
         extra_body={"thinking": {"type": think}},
         stream=True,
@@ -179,6 +183,107 @@ def chat(messages=None, prompt=None, think="disabled", files=None):
     # 流式输出
     for event in response:
         etype = getattr(event, "type", None)
+
+        # 检查是否有 usage 信息（在 response.completed 事件中）
+        if etype == "response.completed":
+            # usage 信息在 event.response.usage 中
+            response_obj = getattr(event, "response", None)
+            usage = getattr(response_obj, "usage", None) if response_obj else None
+            
+            if usage:
+                # 提取 token 数量
+                input_tokens = getattr(usage, "input_tokens", 0)
+                output_tokens = getattr(usage, "output_tokens", 0)
+                total_tokens = getattr(usage, "total_tokens", input_tokens + output_tokens)
+                
+                # 提取缓存信息（如果有）
+                cache_read_input_tokens = getattr(usage, "cache_read_input_tokens", 0)
+                
+                # 计算非缓存输入
+                non_cache_input_tokens = input_tokens - cache_read_input_tokens
+                
+                # 豆包分段计费：输入<=32k，输出<=200
+                # 价格：
+                # - 推理输入: 0.8元/百万tokens
+                # - 推理输出: 2.0元/百万tokens
+                # - 缓存命中: 0.16元/百万tokens
+                
+                # 分段阈值（tokens）
+                INPUT_THRESHOLD = 32 * 1024  # 32k
+                OUTPUT_THRESHOLD = 200
+                
+                # 输入分段计算
+                if non_cache_input_tokens <= INPUT_THRESHOLD:
+                    input_tier1 = non_cache_input_tokens
+                    input_tier2 = 0
+                else:
+                    input_tier1 = INPUT_THRESHOLD
+                    input_tier2 = non_cache_input_tokens - INPUT_THRESHOLD
+                
+                # 输出分段计算
+                if output_tokens <= OUTPUT_THRESHOLD:
+                    output_tier1 = output_tokens
+                    output_tier2 = 0
+                else:
+                    output_tier1 = OUTPUT_THRESHOLD
+                    output_tier2 = output_tokens - OUTPUT_THRESHOLD
+                
+                # 价格计算（单位：元）
+                cache_price = (cache_read_input_tokens / 1_000_000) * 0.16
+                input_tier1_price = (input_tier1 / 1_000_000) * 0.8
+                input_tier2_price = (input_tier2 / 1_000_000) * 0.8  # 超出部分仍用同一价格
+                output_tier1_price = (output_tier1 / 1_000_000) * 2.0
+                output_tier2_price = (output_tier2 / 1_000_000) * 2.0  # 超出部分仍用同一价格
+                
+                total_input_price = cache_price + input_tier1_price + input_tier2_price
+                total_output_price = output_tier1_price + output_tier2_price
+                total_price = total_input_price + total_output_price
+                
+                # 打印详细信息
+                print("\n" + "="*60)
+                print("[Doubao Token Usage & Pricing]")
+                print("-" * 60)
+                print(f"输入 Token:")
+                if cache_read_input_tokens > 0:
+                    print(f"  - 缓存命中: {cache_read_input_tokens:,} tokens × ¥0.16/M = ¥{cache_price:.6f}")
+                if non_cache_input_tokens > 0:
+                    if input_tier2 > 0:
+                        print(f"  - 推理输入 (≤32k): {input_tier1:,} tokens × ¥0.8/M = ¥{input_tier1_price:.6f}")
+                        print(f"  - 推理输入 (>32k): {input_tier2:,} tokens × ¥0.8/M = ¥{input_tier2_price:.6f}")
+                    else:
+                        print(f"  - 推理输入: {input_tier1:,} tokens × ¥0.8/M = ¥{input_tier1_price:.6f}")
+                print(f"  - 小计: {input_tokens:,} tokens")
+                print(f"输出 Token:")
+                if output_tier2 > 0:
+                    print(f"  - 推理输出 (≤200): {output_tier1:,} tokens × ¥2.0/M = ¥{output_tier1_price:.6f}")
+                    print(f"  - 推理输出 (>200): {output_tier2:,} tokens × ¥2.0/M = ¥{output_tier2_price:.6f}")
+                else:
+                    print(f"  - 推理输出: {output_tier1:,} tokens × ¥2.0/M = ¥{output_tier1_price:.6f}")
+                print("-" * 60)
+                print(f"总计: {total_tokens:,} tokens")
+                print(f"总价格: ¥{total_price:.6f} (约 {total_price * 1000:.4f} 厘)")
+                print("=" * 60 + "\n")
+                
+                # 记录到数据库
+                if user_id:
+                    try:
+                        AIUsageTracker.log_usage(
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            model_key="doubao-seed-1-8-251228",
+                            provider="doubao",
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            total_tokens=total_tokens,
+                            input_cost=total_input_price - cache_price,  # 非缓存输入费用
+                            output_cost=total_output_price,
+                            total_cost=total_price,
+                            cache_hit_tokens=cache_read_input_tokens,
+                            cache_miss_tokens=non_cache_input_tokens,
+                            cache_hit_cost=cache_price
+                        )
+                    except Exception as e:
+                        print(f"记录Doubao使用统计失败: {e}")
 
         # 只关心输出文本增量事件
         if etype == "response.output_text.delta":

@@ -19,6 +19,7 @@ from utils.conversation import (
 from utils.ai.deepseek import chat as deepseek_chat
 from utils.ai.doubao import chat as doubao_chat
 from utils.ai.ai import validate_file_ext, validate_file_size
+from utils.ai.usage_tracker import AIUsageTracker
 from utils.login import login_required, op_required
 from settings import PRODUCT_IMAGE_DIR
 
@@ -381,7 +382,7 @@ def new_conversation():
                     yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
                     
                     response_text = ""
-                    for chunk in chat_func(messages=messages, files=saved_files if saved_files else None):
+                    for chunk in chat_func(messages=messages, files=saved_files if saved_files else None, user_id=user_id, conversation_id=conversation_id):
                         chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
                         response_text += chunk_str
                         yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
@@ -458,7 +459,7 @@ def continue_conversation(conversation_id):
                 yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
                 
                 response_text = ""
-                for chunk in chat_func(messages=messages, files=conversation_files if conversation_files else None):
+                for chunk in chat_func(messages=messages, files=conversation_files if conversation_files else None, user_id=user_id, conversation_id=conversation_id):
                     chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
                     response_text += chunk_str
                     yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
@@ -841,3 +842,335 @@ def ai_redeem_code_delete():
         return { "code": 400, "message": f"删除失败: {str(e)}" }
     finally:
         connection.close()
+
+
+# ========== AI使用统计接口 ==========
+
+@ai_page.route("/usage/stats/", methods=["GET"])
+@login_required
+def get_usage_stats():
+    """
+    获取用户AI使用统计
+    
+    参数:
+        time_range: 时间范围 (1h, 1d, 1w, 1y)，默认 1d
+        model_key: 模型标识（可选），不传则查询所有模型
+    
+    返回:
+        {
+            "code": 0,
+            "data": {
+                "time_range": "1d",
+                "start_time": "2024-01-01 00:00:00",
+                "end_time": "2024-01-02 00:00:00",
+                "models": [
+                    {
+                        "model_key": "deepseek-chat",
+                        "provider": "deepseek",
+                        "request_count": 10,
+                        "tokens": {
+                            "input": 1000,
+                            "output": 500,
+                            "total": 1500,
+                            "cache_hit": 200,
+                            "cache_miss": 800
+                        },
+                        "cost": {
+                            "input": 0.001,
+                            "output": 0.0015,
+                            "cache_hit": 0.00004,
+                            "total": 0.00254
+                        }
+                    }
+                ],
+                "summary": {
+                    "total_requests": 10,
+                    "total_tokens": 1500,
+                    "total_cost": 0.00254
+                }
+            }
+        }
+    """
+    user_id = g.current_user["uuid"]
+    time_range = request.args.get("time_range", "1d")
+    model_key = request.args.get("model_key")
+    
+    # 验证时间范围
+    if time_range not in {"1h", "1d", "1w", "1y"}:
+        return jsonify({"code": 400, "message": "无效的时间范围，支持: 1h, 1d, 1w, 1y"})
+    
+    try:
+        stats = AIUsageTracker.get_user_usage_stats(user_id, time_range, model_key)
+        return jsonify({
+            "code": 0,
+            "data": stats
+        })
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"查询失败: {str(e)}"})
+
+
+@ai_page.route("/usage/history/", methods=["GET"])
+@login_required
+def get_usage_history():
+    """
+    获取用户AI使用历史记录
+    
+    参数:
+        time_range: 时间范围 (1h, 1d, 1w, 1y)，默认 1d
+        limit: 返回记录数，默认 100
+    
+    返回:
+        {
+            "code": 0,
+            "data": [
+                {
+                    "id": 1,
+                    "conversation_id": "xxx",
+                    "model_key": "deepseek-chat",
+                    "provider": "deepseek",
+                    "tokens": {...},
+                    "cost": {...},
+                    "created_at": "2024-01-01 12:00:00"
+                }
+            ]
+        }
+    """
+    user_id = g.current_user["uuid"]
+    time_range = request.args.get("time_range", "1d")
+    limit = int(request.args.get("limit", 100))
+    
+    # 验证时间范围
+    if time_range not in {"1h", "1d", "1w", "1y"}:
+        return jsonify({"code": 400, "message": "无效的时间范围，支持: 1h, 1d, 1w, 1y"})
+    
+    # 限制最大记录数
+    if limit > 1000:
+        limit = 1000
+    
+    try:
+        history = AIUsageTracker.get_user_usage_history(user_id, time_range, limit)
+        return jsonify({
+            "code": 0,
+            "data": history
+        })
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"查询失败: {str(e)}"})
+
+
+@ai_page.route("/model/config/", methods=["GET"])
+@login_required
+@op_required
+def get_model_config_endpoint():
+    """
+    获取模型配置（管理员）
+    
+    参数:
+        model_key: 模型标识
+    """
+    model_key = request.args.get("model_key")
+    if not model_key:
+        return jsonify({"code": 400, "message": "缺少 model_key 参数"})
+    
+    try:
+        config = AIUsageTracker.get_model_config(model_key)
+        if not config:
+            return jsonify({"code": 404, "message": "模型配置不存在"})
+        
+        return jsonify({
+            "code": 0,
+            "data": config
+        })
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"查询失败: {str(e)}"})
+
+
+@ai_page.route("/model/config/add/", methods=["POST"])
+@login_required
+@op_required
+def add_model_config_endpoint():
+    """
+    添加或更新模型配置（管理员）
+    
+    参数:
+        model_key: 模型标识
+        model_name: 模型名称
+        provider: 提供商
+        input_price: 输入价格（元/百万tokens）
+        output_price: 输出价格（元/百万tokens）
+        cache_hit_price: 缓存命中价格（可选）
+        input_threshold: 输入分段阈值（可选）
+        output_threshold: 输出分段阈值（可选）
+    """
+    data = request.get_json()
+    
+    required_fields = ["model_key", "model_name", "provider", "input_price", "output_price"]
+    for field in required_fields:
+        if field not in data:
+            return jsonify({"code": 400, "message": f"缺少必填参数: {field}"})
+    
+    try:
+        success = AIUsageTracker.add_model_config(
+            model_key=data["model_key"],
+            model_name=data["model_name"],
+            provider=data["provider"],
+            input_price=float(data["input_price"]),
+            output_price=float(data["output_price"]),
+            cache_hit_price=float(data.get("cache_hit_price", 0)) if data.get("cache_hit_price") else None,
+            input_threshold=int(data.get("input_threshold")) if data.get("input_threshold") else None,
+            output_threshold=int(data.get("output_threshold")) if data.get("output_threshold") else None
+        )
+        
+        if success:
+            return jsonify({
+                "code": 0,
+                "message": "配置保存成功"
+            })
+        else:
+            return jsonify({"code": 500, "message": "配置保存失败"})
+    
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"操作失败: {str(e)}"})
+
+
+@ai_page.route("/platform-stats/", methods=["GET"])
+@login_required
+@op_required
+def get_platform_stats():
+    """
+    获取全平台模型使用统计（管理员）
+    
+    参数:
+        time_range: 时间范围 (1h, 1d, 1w, 1y, all)，默认 1d
+        model_key: 模型标识（可选），不传则查询所有模型
+    
+    返回:
+        {
+            "code": 0,
+            "data": {
+                "time_range": "1d",
+                "start_time": "2024-01-01 00:00:00",
+                "end_time": "2024-01-02 00:00:00",
+                "models": [
+                    {
+                        "model_key": "deepseek-chat",
+                        "provider": "deepseek",
+                        "user_count": 50,
+                        "request_count": 1000,
+                        "tokens": {...},
+                        "cost": {...},
+                        "usage_period": {...}
+                    }
+                ],
+                "summary": {
+                    "total_unique_users": 50,
+                    "total_requests": 1000,
+                    "total_tokens": 150000,
+                    "total_cost": 0.45,
+                    "avg_cost_per_request": 0.00045,
+                    "avg_tokens_per_request": 150
+                }
+            }
+        }
+    """
+    time_range = request.args.get("time_range", "1d")
+    model_key = request.args.get("model_key")
+    
+    # 验证时间范围
+    if time_range not in {"1h", "1d", "1w", "1y", "all"}:
+        return jsonify({"code": 400, "message": "无效的时间范围，支持: 1h, 1d, 1w, 1y, all"})
+    
+    try:
+        stats = AIUsageTracker.get_platform_model_stats(time_range, model_key)
+        
+        if 'error' in stats:
+            return jsonify({"code": 500, "message": stats['error']})
+        
+        return jsonify({
+            "code": 0,
+            "data": stats
+        })
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"查询失败: {str(e)}"})
+
+
+@ai_page.route("/time-series-stats/", methods=["GET"])
+@login_required
+@op_required
+def get_time_series_stats():
+    """
+    获取时间序列统计数据（管理员）
+    
+    参数:
+        time_range: 时间范围 (1h, 1d, 1w, 1y, all)，默认 1d
+        model_key: 模型标识（可选），不传则查询所有模型
+    """
+    time_range = request.args.get("time_range", "1d")
+    model_key = request.args.get("model_key")
+
+    if time_range not in {"1h", "1d", "1w", "1y", "all"}:
+        return jsonify({"code": 400, "message": "无效的时间范围，支持: 1h, 1d, 1w, 1y, all"})
+
+    try:
+        stats = AIUsageTracker.get_time_series_stats(time_range, model_key)
+        if 'error' in stats:
+            return jsonify({"code": 500, "message": stats['error']})
+        return jsonify({
+            "code": 0,
+            "data": stats
+        })
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"查询失败: {str(e)}"})
+
+
+@ai_page.route("/user-ranking/", methods=["GET"])
+@login_required
+@op_required
+def get_user_ranking():
+    """
+    获取用户使用排行榜（管理员）
+    
+    参数:
+        time_range: 时间范围 (1h, 1d, 1w, 1y, all)，默认 1d
+        model_key: 模型标识（可选）
+        order_by: 排序字段 (cost, tokens, requests)，默认 cost
+        limit: 返回数量，默认 50，最大 200
+    
+    返回:
+        {
+            "code": 0,
+            "data": [
+                {
+                    "rank": 1,
+                    "user_id": "xxx",
+                    "request_count": 100,
+                    "total_tokens": 15000,
+                    "total_cost": 0.045,
+                    "avg_cost_per_request": 0.00045,
+                    "usage_period": {...}
+                }
+            ]
+        }
+    """
+    time_range = request.args.get("time_range", "1d")
+    model_key = request.args.get("model_key")
+    order_by = request.args.get("order_by", "cost")
+    limit = int(request.args.get("limit", 50))
+    
+    # 验证参数
+    if time_range not in {"1h", "1d", "1w", "1y", "all"}:
+        return jsonify({"code": 400, "message": "无效的时间范围，支持: 1h, 1d, 1w, 1y, all"})
+    
+    if order_by not in {"cost", "tokens", "requests"}:
+        return jsonify({"code": 400, "message": "无效的排序字段，支持: cost, tokens, requests"})
+    
+    if limit > 200:
+        limit = 200
+    
+    try:
+        ranking = AIUsageTracker.get_user_ranking(time_range, model_key, order_by, limit)
+        return jsonify({
+            "code": 0,
+            "data": ranking
+        })
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"查询失败: {str(e)}"})
