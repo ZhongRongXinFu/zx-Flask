@@ -32,17 +32,36 @@ ai_page = Blueprint('ai', __name__)
 
 # 固定分析提示词
 ANALYSIS_PROMPTS = {
-    "personal": """【个人分析模式】
+    "personal2": """不用管我上传的文件，随便输出一点markdown格式的文本内容+表格测试一下，限制200token""",
+    "personal": """个人征信
+第一个步骤  写清楚客户的姓名 年纪
+贷款的余额。和担保的余额。(同一个银行核算到一笔)只需要总结未结清的部分，单位万元列举清楚 银行名称和对应的余额担保的贷款 核算贷款的总和 和担保的总和贷款发一个文字清单，担保的发文字清单按排列下顺序，标注数字。数字需要精，核算清楚，不能有任何错误(最后核验比对贷款的汇总金额是否错误的话 就比对 信贷交易授信及负债信息概要里面的，循环贷账户+非循环贷里面的余额 想加一起就可以，核验贷款管理机构数量=非循环贷管理机构数=循环贷账户管理机构数合计一起)
+第二个步骤 
+只需需要写银行名称  和对应的余额  汇总   验算步骤 不要写出来了   
+先按照第1个步骤运行，然后再按照第2个步骤，全部弄好之后，直接弄个表格发给我
 
-我需要你帮我分析以下上传的文件，请：
+企业征信
+只需要总结未结清的部分，
+列举清楚 银行名称和对应的余额  （同一个 银行核算到一笔） 
+汇总金额也算下
+排列下顺序，标注数字。
+数字需要精准，核算清楚，不能有任何错误 （反复验算 总金额和贷款的机构数 ）
+只需需要写银行名称  和对应的余额  汇总   验算步骤 不要写出来了   
+先按照第1个步骤运行，然后再按照第2个步骤，全部弄好之后，直接弄个表格发给我
 
-1. 提取文件中的关键信息和数据
-2. 进行数据分析和趋势判断
-3. 给出专业的建议和意见
-4. 用通俗易懂的语言解释复杂概念
-5. 如有多个文件，请逐个分析并给出综合结论
 
-请确保分析清晰、准确、有参考价值。""",
+水母报告
+写一下最近三年的开票金额和纳税金额，分别写一下分别对应  只要写年末总的汇总就可以了，不需要每个月都写  做到一个表格里呀  （单位万元）
+
+流水分析
+
+这个流水里面帮我解析一下，全部的进账 帮忙挑出来 。然后把这些进账全部帮忙分类统计一下，分别是多少  不同的类型 分别汇总
+
+
+查询次数
+
+看看最近半年最后的查询部分，帮我统计一下，统计一下银行名称。那个查询只要帮我看贷款审批，法人代表负责人高管等资信审查
+最近三个月统计一下，最近6个月也统计一下""",
     
     "company": """【企业分析模式】
 
@@ -1174,3 +1193,391 @@ def get_user_ranking():
         })
     except Exception as e:
         return jsonify({"code": 500, "message": f"查询失败: {str(e)}"})
+
+
+# ========== 数据分析接口 ==========
+
+def check_analysis_quota(user_id: str, analysis_type: str) -> tuple:
+    """
+    检查用户分析配额
+    
+    Args:
+        user_id: 用户ID
+        analysis_type: 分析类型 (personal/company)
+    
+    Returns:
+        (has_enough, current_quota): 是否有足够的配额，当前配额值
+    """
+    quota_cost = 1 if analysis_type == "personal" else 2
+    
+    conn = connect()
+    try:
+        with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+            cursor.execute("SELECT ai_quota FROM user WHERE uuid = %s", (user_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                return False, 0
+            
+            current_quota = result["ai_quota"]
+            has_enough = current_quota >= quota_cost
+            
+            return has_enough, current_quota
+    finally:
+        conn.close()
+
+
+def deduct_analysis_quota(user_id: str, analysis_type: str) -> bool:
+    """
+    扣除用户分析配额
+    
+    Args:
+        user_id: 用户ID
+        analysis_type: 分析类型 (personal/company)
+    
+    Returns:
+        bool: 是否扣除成功
+    """
+    quota_cost = 1 if analysis_type == "personal" else 2
+    
+    conn = connect()
+    try:
+        with conn.cursor() as cursor:
+            sql = "UPDATE user SET ai_quota = ai_quota - %s WHERE uuid = %s AND ai_quota >= %s"
+            cursor.execute(sql, (quota_cost, user_id, quota_cost))
+            conn.commit()
+            return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+@ai_page.route("/analyze/new/", methods=["POST"])
+@login_required
+def new_analysis():
+    """创建新的数据分析会话（需上传文件，使用内置提示词）"""
+    user_id = g.current_user["uuid"]
+    model = "doubao"  # 数据分析模型固定为豆包
+    analysis_type = request.form.get("analysis_type", "personal")  # personal or company
+    title = request.form.get("title", "新分析")
+    custom_instruction = ""  # 初始分析不接受自定义提示词
+    
+    # 验证参数
+    if analysis_type not in {"personal", "company"}:
+        return jsonify({"code": 400, "message": "不支持的分析类型，支持: personal, company"})
+    
+    # 验证必须上传文件
+    files = request.files.getlist("files")
+    if not files or not any(f.filename for f in files):
+        return jsonify({"code": 400, "message": "初始分析必须上传至少一个文件"})
+    
+    # 检查用户配额
+    has_enough, current_quota = check_analysis_quota(user_id, analysis_type)
+    quota_cost = 1 if analysis_type == "personal" else 2
+    
+    if not has_enough:
+        return jsonify({
+            "code": 402,
+            "message": "配额不足",
+            "data": {
+                "required": quota_cost,
+                "current": current_quota
+            }
+        })
+    
+    # 创建对话（使用 analysis_type）
+    conversation = create_conversation(user_id, model, title, analysis_type)
+    conversation_id = conversation["id"]
+    
+    # 获取分析提示词（仅内置提示词）
+    system_prompt = get_analysis_prompt(analysis_type, custom_instruction)
+    
+    # 开始分析
+    if files:
+        try:
+            saved_files = save_uploaded_files(files, conversation_id)
+            
+            # 保存到数据库
+            if saved_files:
+                update_conversation(conversation_id, [], saved_files)
+            
+            def generate():
+                try:
+                    # 先扣除配额
+                    if not deduct_analysis_quota(user_id, analysis_type):
+                        yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': '配额扣除失败'})}\n\n"
+                        return
+                    
+                    # 构建消息（插入系统提示词）
+                    messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": "请对我上传的文件进行分析。"}
+                    ]
+                    
+                    # 调用豆包模型
+                    chat_func = doubao_chat
+                    
+                    # 流式输出响应
+                    yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started', 'analysis_type': analysis_type})}\n\n"
+                    
+                    response_text = ""
+                    print(f"\n[分析开始] 会话ID: {conversation_id}, 类型: {analysis_type}")
+                    for chunk in chat_func(messages=messages, files=saved_files if saved_files else None, user_id=user_id, conversation_id=conversation_id):
+                        chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
+                        response_text += chunk_str
+                        print(chunk_str, end='', flush=True)  # 实时打印AI输出
+                        yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
+                    print(f"\n[分析完成] 总字数: {len(response_text)}")
+                    
+                    # 保存对话到数据库（不保存系统提示词，只保存用户和助手消息）
+                    messages_to_save = [
+                        {"role": "user", "content": "请对我上传的文件进行分析。"},
+                        {"role": "assistant", "content": response_text}
+                    ]
+                    update_conversation(conversation_id, messages_to_save, saved_files)
+                    
+                    yield f"event: end\ndata: {json.dumps({'status': 'completed', 'quota_cost': quota_cost})}\n\n"
+                
+                except Exception as e:
+                    yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+            
+            return Response(
+                stream_with_context(generate()),
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+            )
+        
+        except ValueError as e:
+            return jsonify({"code": 400, "message": str(e)})
+        except Exception as e:
+            return jsonify({"code": 500, "message": f"处理失败: {str(e)}"})
+
+
+@ai_page.route("/analyze/continue/<conversation_id>/", methods=["POST"])
+@login_required
+def continue_analysis(conversation_id):
+    """继续数据分析对话"""
+    user_id = g.current_user["uuid"]
+    prompt = request.form.get("prompt", "")
+    
+    if not prompt:
+        return jsonify({"code": 400, "message": "提示词不能为空"})
+    
+    # 获取对话
+    conversation = get_conversation(conversation_id, user_id)
+    if not conversation:
+        return jsonify({"code": 404, "message": "对话不存在"})
+    
+    analysis_type = conversation.get("analysis_type")
+    if not analysis_type:
+        return jsonify({"code": 400, "message": "这不是一个分析对话"})
+    
+    # 检查用户配额
+    has_enough, current_quota = check_analysis_quota(user_id, analysis_type)
+    quota_cost = 1 if analysis_type == "personal" else 2
+    
+    if not has_enough:
+        return jsonify({
+            "code": 402,
+            "message": "配额不足",
+            "data": {
+                "required": quota_cost,
+                "current": current_quota
+            }
+        })
+    
+    model = conversation["model"]
+    messages = conversation["messages"]
+    conversation_files = conversation["files"]
+    
+    try:
+        # 保存新上传的文件
+        files = request.files.getlist("files")
+        if files:
+            new_files = save_uploaded_files(files, conversation_id)
+            conversation_files.extend(new_files)
+        
+        def generate():
+            try:
+                # 先扣除配额
+                if not deduct_analysis_quota(user_id, analysis_type):
+                    yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': '配额扣除失败'})}\n\n"
+                    return
+                
+                # 获取分析提示词
+                system_prompt = get_analysis_prompt(analysis_type)
+                
+                # 添加新的用户消息
+                messages.append({"role": "user", "content": prompt})
+                
+                # 调用豆包模型
+                chat_func = doubao_chat
+                
+                # 构建消息，在开始时添加系统提示词
+                messages_with_system = [{"role": "system", "content": system_prompt}] + messages
+                
+                # 流式输出响应
+                yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
+                
+                response_text = ""
+                print(f"\n[继续分析] 会话ID: {conversation_id}, 类型: {analysis_type}")
+                for chunk in chat_func(messages=messages_with_system, files=conversation_files if conversation_files else None, user_id=user_id, conversation_id=conversation_id):
+                    chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
+                    response_text += chunk_str
+                    print(chunk_str, end='', flush=True)  # 实时打印AI输出
+                    yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
+                print(f"\n[分析完成] 总字数: {len(response_text)}")
+                
+                # 保存助手响应到数据库
+                messages.append({"role": "assistant", "content": response_text})
+                update_conversation(conversation_id, messages, conversation_files)
+                
+                yield f"event: end\ndata: {json.dumps({'status': 'completed', 'quota_cost': quota_cost})}\n\n"
+            
+            except Exception as e:
+                yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+        
+        return Response(
+            stream_with_context(generate()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+        )
+    
+    except ValueError as e:
+        return jsonify({"code": 400, "message": str(e)})
+    except Exception as e:
+        return jsonify({"code": 500, "message": f"处理失败: {str(e)}"})
+
+
+@ai_page.route("/analyze/list/", methods=["GET"])
+@login_required
+def list_user_analyses():
+    """列出用户的所有分析对话"""
+    user_id = g.current_user["uuid"]
+    analysis_type = request.args.get("analysis_type")  # 可选：按分析类型筛选 (personal/company)
+    model = request.args.get("model")  # 可选：按模型筛选
+    limit = int(request.args.get("limit", 50))
+    offset = int(request.args.get("offset", 0))
+    
+    conn = connect()
+    try:
+        with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+            # 构建查询条件
+            where_clauses = ["user_id = %s", "analysis_type IS NOT NULL"]
+            params = [user_id]
+            
+            if analysis_type:
+                where_clauses.append("analysis_type = %s")
+                params.append(analysis_type)
+            
+            if model:
+                where_clauses.append("model = %s")
+                params.append(model)
+            
+            where_sql = " WHERE " + " AND ".join(where_clauses)
+            
+            # 查询总数
+            count_sql = f"SELECT COUNT(*) as total FROM conversations{where_sql}"
+            cursor.execute(count_sql, params)
+            total = cursor.fetchone()["total"]
+            
+            # 查询数据
+            sql = f"""
+                SELECT id, model, title, analysis_type, created_at, updated_at
+                FROM conversations{where_sql}
+                ORDER BY updated_at DESC
+                LIMIT %s OFFSET %s
+            """
+            params.extend([limit, offset])
+            cursor.execute(sql, params)
+            results = cursor.fetchall()
+        
+        return jsonify({
+            "code": 0,
+            "data": results,
+            "total": total
+        })
+    finally:
+        conn.close()
+
+
+@ai_page.route("/analyze/get/<conversation_id>/", methods=["GET"])
+@login_required
+def get_analysis_detail(conversation_id):
+    """获取分析对话详情"""
+    user_id = g.current_user["uuid"]
+    
+    conversation = get_conversation(conversation_id, user_id)
+    if not conversation:
+        return jsonify({"code": 404, "message": "对话不存在"})
+    
+    if not conversation.get("analysis_type"):
+        return jsonify({"code": 400, "message": "这不是一个分析对话"})
+    
+    return jsonify({
+        "code": 0,
+        "data": conversation
+    })
+
+
+@ai_page.route("/analyze/delete/<conversation_id>/", methods=["DELETE"])
+@login_required
+def delete_analysis(conversation_id):
+    """删除分析对话"""
+    user_id = g.current_user["uuid"]
+    
+    # 获取对话以验证类型和获取文件列表
+    conversation = get_conversation(conversation_id, user_id)
+    if not conversation:
+        return jsonify({"code": 404, "message": "对话不存在"})
+    
+    if not conversation.get("analysis_type"):
+        return jsonify({"code": 400, "message": "这不是一个分析对话"})
+    
+    # 删除关联的文件
+    base_dir = os.path.expanduser(PRODUCT_IMAGE_DIR)
+    upload_dir = os.path.join(base_dir, "chat-uploads", conversation_id)
+    if os.path.isdir(upload_dir):
+        try:
+            shutil.rmtree(upload_dir)
+        except Exception:
+            pass
+    
+    # 删除对话
+    if not delete_conversation(conversation_id, user_id):
+        return jsonify({"code": 500, "message": "删除失败"})
+    
+    return jsonify({
+        "code": 0,
+        "message": "分析对话已删除"
+    })
+
+
+@ai_page.route("/analyze/quota/", methods=["GET"])
+@login_required
+def get_analysis_quota():
+    """获取用户的分析配额信息"""
+    user_id = g.current_user["uuid"]
+    
+    conn = connect()
+    try:
+        with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+            cursor.execute("SELECT ai_quota FROM user WHERE uuid = %s", (user_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                return jsonify({"code": 404, "message": "用户不存在"})
+            
+            ai_quota = result["ai_quota"]
+            
+            return jsonify({
+                "code": 0,
+                "data": {
+                    "current_quota": ai_quota,
+                    "personal_cost": 1,
+                    "company_cost": 2,
+                    "can_do_personal": ai_quota >= 1,
+                    "can_do_company": ai_quota >= 2
+                }
+            })
+    finally:
+        conn.close()
