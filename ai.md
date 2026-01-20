@@ -137,7 +137,7 @@ curl -X GET http://localhost:8000/ai/conversation/conv-550e8400-e29b-41d4-a716-4
 
 ### 接口信息
 - **方法**: `PUT`
-- **路由**: `/ai/conversation/<conversation_id>/title/`
+/`
 - **认证**: 是
 - **描述**: 修改指定会话的标题名称
 
