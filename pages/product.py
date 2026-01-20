@@ -55,8 +55,8 @@ def get_list(f):
 
     # 不同平台的列和基础过滤
     base_where = []
-    columns_miniprogram = "id, uuid, name, logo, tag, slogan, price"
-    columns_manager = "id, uuid, name, logo, tag, slogan, price, is_online, manager, department, description, created_at, updated_at"
+    columns_miniprogram = "id, uuid, name, logo, tag, slogan, price, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features"
+    columns_manager = "id, uuid, name, logo, tag, slogan, price, is_online, manager, department, description, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features, created_at, updated_at"
 
     if f == "miniprogram":
         base_where.append("is_online = 1")
@@ -170,30 +170,34 @@ def create_product():
     manager = request.form.get("manager", None)
     department = request.form.get("department", None)
     description = request.form.get("description", None)
-    file = request.files.get("logo")
+    bank_name = request.form.get("bank_name", "暂无")
+    reference_rate = request.form.get("reference_rate", "暂无")
+    loan_amount = request.form.get("loan_amount", "暂无")
+    loan_term = request.form.get("loan_term", "暂无")
+    repayment_method = request.form.get("repayment_method", "暂无")
+    guarantee_method = request.form.get("guarantee_method", "暂无")
+    approval_mode = request.form.get("approval_mode", "暂无")
+    usage_target = request.form.get("usage_target", "暂无")
+    organization = request.form.get("organization", "暂无")
+    service_area = request.form.get("service_area", "暂无")
+    product_features = request.form.get("product_features", "暂无")
+    logo = request.form.get("logo")
 
-    if not file or not name or not tag or not slogan or not price or not is_online:
+    if not logo or not name or not tag or not slogan or not price or not is_online:
         return jsonify({"code": 400, "message": "缺少必要字段"})
     
     product_uuid = str(uuid.uuid4())
-    
-    ext = file.filename.rsplit('.', 1)[-1]
-    new_filename = f"{product_uuid}.{ext}"
-    save_path = os.path.join(os.path.expanduser(PRODUCT_IMAGE_DIR), "logo", new_filename)
-    file.save(save_path)
-
-    logo = "http://192.168.196.47:8000/static/logo/" + new_filename
 
     connection = connect()
     try:
         with connection.cursor() as cursor:
             sql = """
                 INSERT INTO product
-                (name, tag, slogan, price, is_online, manager, department, description, logo, uuid)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (name, tag, slogan, price, is_online, manager, department, description, logo, uuid, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
 
-            cursor.execute(sql, (name, tag, slogan, price, is_online, manager, department, description, logo, product_uuid))
+            cursor.execute(sql, (name, tag, slogan, price, is_online, manager, department, description, logo, product_uuid, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features))
             rows = cursor.fetchall()
         connection.commit()
         return jsonify({ "code": 200, "data": rows })
@@ -215,12 +219,23 @@ def update_product():
     manager = request.form.get("manager", None)
     department = request.form.get("department", None)
     description = request.form.get("description", None)
-    logo_url = request.form.get("logo_url")
-    file = request.files.get("logo")
+    bank_name = request.form.get("bank_name", None)
+    reference_rate = request.form.get("reference_rate", None)
+    loan_amount = request.form.get("loan_amount", None)
+    loan_term = request.form.get("loan_term", None)
+    repayment_method = request.form.get("repayment_method", None)
+    guarantee_method = request.form.get("guarantee_method", None)
+    approval_mode = request.form.get("approval_mode", None)
+    usage_target = request.form.get("usage_target", None)
+    organization = request.form.get("organization", None)
+    service_area = request.form.get("service_area", None)
+    product_features = request.form.get("product_features", None)
+    logo = request.form.get("logo")
 
-    print("request.form:", request.form)
+    # print("request.form:", request.form)
 
-    if not product_uuid or not logo_url or not name or not tag or not slogan or not price or not is_online:
+    if not product_uuid or not logo or not name or not tag or not slogan or not price or not is_online:
+        print(product_uuid, logo, name, tag, slogan, price, is_online)
         return jsonify({"code": 400, "message": "缺少必要字段"})
     
     connection = connect()
@@ -234,16 +249,6 @@ def update_product():
     except Exception as e:
         connection.close()
         return jsonify({"code": 500, "message": f"数据库查询错误: {e}"})
-    
-    if file:
-        ext = file.filename.rsplit('.', 1)[-1]
-        new_filename = f"{product_uuid}.{ext}"
-        save_path = os.path.join(os.path.expanduser(PRODUCT_IMAGE_DIR), "logo", new_filename)
-        file.save(save_path)
-
-        logo = "http://192.168.196.47:8000/static/logo/" + new_filename
-    else:
-        logo = logo_url
 
     connection = connect()
     try:
@@ -258,10 +263,21 @@ def update_product():
                 manager=%s,
                 department=%s,
                 description=%s,
-                logo=%s
+                logo=%s,
+                bank_name=%s,
+                reference_rate=%s,
+                loan_amount=%s,
+                loan_term=%s,
+                repayment_method=%s,
+                guarantee_method=%s,
+                approval_mode=%s,
+                usage_target=%s,
+                organization=%s,
+                service_area=%s,
+                product_features=%s
                 WHERE uuid=%s
             """
-            cursor.execute(sql, (name, tag, slogan, price, is_online, manager, department, description, logo, product_uuid))
+            cursor.execute(sql, (name, tag, slogan, price, is_online, manager, department, description, logo, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features, product_uuid))
             rows = cursor.fetchall()
         connection.commit()
         return jsonify({ "code": 200, "data": rows })
@@ -288,6 +304,17 @@ def info_product(product_uuid):
                 manager,
                 department,
                 description,
+                bank_name,
+                reference_rate,
+                loan_amount,
+                loan_term,
+                repayment_method,
+                guarantee_method,
+                approval_mode,
+                usage_target,
+                organization,
+                service_area,
+                product_features,
                 created_at,
                 updated_at
                 {', detail_html ' if r.lower() == 'true' else ''}

@@ -1,6 +1,6 @@
 # 内容信息获取与修改 API 文档
 
-**更新时间**: 2026年1月17日
+**更新时间**: 2026年1月20日
 
 ## 环境配置
 
@@ -80,7 +80,18 @@ curl -X GET "http://localhost:8000/product/list/manager/?manager=张&department=
       "logo": "http://192.168.196.47:8000/static/logo/550e8400-e29b-41d4-a716-446655440000.jpg",
       "tag": "标签",
       "slogan": "产品标语",
-      "price": "9999.99"
+      "price": "9999.99",
+      "bank_name": "中国银行",
+      "reference_rate": "年利率4%-6%",
+      "loan_amount": "10-1000万",
+      "loan_term": "3年",
+      "repayment_method": "等额本息",
+      "guarantee_method": "抵押",
+      "approval_mode": "线上审批",
+      "usage_target": "企业主",
+      "organization": "中国银行",
+      "service_area": "全国",
+      "product_features": "额度高，利率低"
     }
   ],
   "pagination": {
@@ -109,6 +120,17 @@ curl -X GET "http://localhost:8000/product/list/manager/?manager=张&department=
       "manager": "张三",
       "department": "产品部",
       "description": "产品描述",
+      "bank_name": "中国银行",
+      "reference_rate": "年利率4%-6%",
+      "loan_amount": "10-1000万",
+      "loan_term": "3年",
+      "repayment_method": "等额本息",
+      "guarantee_method": "抵押",
+      "approval_mode": "线上审批",
+      "usage_target": "企业主",
+      "organization": "中国银行",
+      "service_area": "全国",
+      "product_features": "额度高，利率低",
       "created_at": "2026-01-01 10:00:00",
       "updated_at": "2026-01-17 15:30:00"
     }
@@ -147,24 +169,47 @@ curl -X GET "http://localhost:8000/product/list/manager/?manager=张&department=
 | slogan | string | 是 | 产品标语 |
 | price | string | 是 | 产品价格 |
 | is_online | int | 是 | 是否上线（0=否，1=是） |
-| logo | file | 是 | Logo图片文件（multipart/form-data） |
+| logo | string | 是 | Logo图片URL |
 | manager | string | 否 | 产品经理名称 |
 | department | string | 否 | 所属部门 |
 | description | string | 否 | 产品描述 |
+| bank_name | string | 否 | 银行名称，默认"暂无" |
+| reference_rate | string | 否 | 参考利率，默认"暂无" |
+| loan_amount | string | 否 | 贷款额度，默认"暂无" |
+| loan_term | string | 否 | 贷款期限，默认"暂无" |
+| repayment_method | string | 否 | 还款方式，默认"暂无" |
+| guarantee_method | string | 否 | 担保方式，默认"暂无" |
+| approval_mode | string | 否 | 审批模式，默认"暂无" |
+| usage_target | string | 否 | 使用对象，默认"暂无" |
+| organization | string | 否 | 所属机构，默认"暂无" |
+| service_area | string | 否 | 服务区域，默认"暂无" |
+| product_features | string | 否 | 产品特色，默认"暂无" |
 
 ### 请求示例
 ```bash
 curl -X POST http://localhost:8000/product/new/ \
   -H "Authorization: Bearer <admin_token>" \
-  -F "name=新产品" \
-  -F "tag=AI工具" \
-  -F "slogan=高效率工作助手" \
-  -F "price=9999" \
-  -F "is_online=1" \
-  -F "manager=张三" \
-  -F "department=产品部" \
-  -F "description=这是一个产品" \
-  -F "logo=@/path/to/logo.jpg"
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "name=新产品" \
+  -d "tag=AI工具" \
+  -d "slogan=高效率工作助手" \
+  -d "price=9999" \
+  -d "is_online=1" \
+  -d "manager=张三" \
+  -d "department=产品部" \
+  -d "description=这是一个产品" \
+  -d "bank_name=中国银行" \
+  -d "reference_rate=年利率4%-6%" \
+  -d "loan_amount=10-1000万" \
+  -d "loan_term=3年" \
+  -d "repayment_method=等额本息" \
+  -d "guarantee_method=抵押" \
+  -d "approval_mode=线上审批" \
+  -d "usage_target=企业主" \
+  -d "organization=中国银行" \
+  -d "service_area=全国" \
+  -d "product_features=额度高，利率低" \
+  -d "logo=https://example.com/logo.jpg"
 ```
 
 ### 返回数据类型
@@ -205,38 +250,42 @@ curl -X POST http://localhost:8000/product/new/ \
 | slogan | string | 是 | 产品标语 |
 | price | string | 是 | 产品价格 |
 | is_online | int | 是 | 是否上线（0=否，1=是） |
-| logo_url | string | 是 | 当前Logo的URL（用于校验） |
-| logo | file | 否 | 新的Logo图片文件（如果要更换） |
+| logo | string | 是 | Logo图片URL |
 | manager | string | 否 | 产品经理名称 |
 | department | string | 否 | 所属部门 |
 | description | string | 否 | 产品描述 |
+| bank_name | string | 否 | 银行名称 |
+| reference_rate | string | 否 | 参考利率 |
+| loan_amount | string | 否 | 贷款额度 |
+| loan_term | string | 否 | 贷款期限 |
+| repayment_method | string | 否 | 还款方式 |
+| guarantee_method | string | 否 | 担保方式 |
+| approval_mode | string | 否 | 审批模式 |
+| usage_target | string | 否 | 使用对象 |
+| organization | string | 否 | 所属机构 |
+| service_area | string | 否 | 服务区域 |
+| product_features | string | 否 | 产品特色 |
 
 ### 请求示例
 ```bash
-# 更新产品信息（不更换Logo）
+# 更新产品信息
 curl -X POST http://localhost:8000/product/update/ \
   -H "Authorization: Bearer <admin_token>" \
-  -F "uuid=550e8400-e29b-41d4-a716-446655440000" \
-  -F "name=更新后的产品名" \
-  -F "tag=更新标签" \
-  -F "slogan=新标语" \
-  -F "price=8888" \
-  -F "is_online=1" \
-  -F "logo_url=http://192.168.196.47:8000/static/logo/old.jpg" \
-  -F "manager=李四" \
-  -F "department=市场部"
-
-# 更新产品信息（包括替换Logo）
-curl -X POST http://localhost:8000/product/update/ \
-  -H "Authorization: Bearer <admin_token>" \
-  -F "uuid=550e8400-e29b-41d4-a716-446655440000" \
-  -F "name=更新后的产品名" \
-  -F "tag=更新标签" \
-  -F "slogan=新标语" \
-  -F "price=8888" \
-  -F "is_online=1" \
-  -F "logo_url=http://192.168.196.47:8000/static/logo/old.jpg" \
-  -F "logo=@/path/to/new_logo.jpg"
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "uuid=550e8400-e29b-41d4-a716-446655440000" \
+  -d "name=更新后的产品名" \
+  -d "tag=更新标签" \
+  -d "slogan=新标语" \
+  -d "price=8888" \
+  -d "is_online=1" \
+  -d "logo=http://192.168.196.47:8000/static/logo/new_logo.jpg" \
+  -d "manager=李四" \
+  -d "department=市场部" \
+  -d "bank_name=工商银行" \
+  -d "reference_rate=年利率5%-7%" \
+  -d "loan_amount=20-2000万" \
+  -d "loan_term=5年" \
+  -d "repayment_method=先息后本"
 ```
 
 ### 返回数据类型
@@ -302,6 +351,17 @@ curl -X GET http://localhost:8000/product/info/550e8400-e29b-41d4-a716-446655440
     "manager": "张三",
     "department": "产品部",
     "description": "产品描述",
+    "bank_name": "中国银行",
+    "reference_rate": "年利率4%-6%",
+    "loan_amount": "10-1000万",
+    "loan_term": "3年",
+    "repayment_method": "等额本息",
+    "guarantee_method": "抵押",
+    "approval_mode": "线上审批",
+    "usage_target": "企业主",
+    "organization": "中国银行",
+    "service_area": "全国",
+    "product_features": "额度高，利率低",
     "created_at": "2026-01-01 10:00:00",
     "updated_at": "2026-01-17 15:30:00",
     "detail_html": "<div>富文本内容...</div>"
@@ -592,7 +652,7 @@ curl -X POST http://localhost:8000/dynamic_components/update/ \
 
 ---
 
-## 常用数据格式说明
+### 常用数据格式说明
 
 ### 产品数据字段
 
@@ -609,6 +669,17 @@ curl -X POST http://localhost:8000/dynamic_components/update/ \
 | manager | string | 产品经理名称 |
 | department | string | 所属部门 |
 | description | string | 产品描述 |
+| bank_name | string | 银行名称 |
+| reference_rate | string | 参考利率 |
+| loan_amount | string | 贷款额度 |
+| loan_term | string | 贷款期限 |
+| repayment_method | string | 还款方式 |
+| guarantee_method | string | 担保方式 |
+| approval_mode | string | 审批模式 |
+| usage_target | string | 使用对象 |
+| organization | string | 所属机构 |
+| service_area | string | 服务区域 |
+| product_features | string | 产品特色 |
 | detail_html | string | 富文本HTML内容 |
 | created_at | datetime | 创建时间（格式：YYYY-MM-DD HH:MM:SS） |
 | updated_at | datetime | 更新时间（格式：YYYY-MM-DD HH:MM:SS） |
@@ -630,4 +701,6 @@ curl -X POST http://localhost:8000/dynamic_components/update/ \
 
 | 版本 | 日期 | 更新说明 |
 |------|------|--------|
+| 1.2 | 2026-01-20 | 修改创建和更新产品接口，logo从文件上传改为URL传递 |
+| 1.1 | 2026-01-20 | 为产品表新增13个字段：银行名称、参考利率、贷款额度、贷款期限、还款方式、担保方式、审批模式、使用对象、所属机构、服务区域、产品特色 |
 | 1.0 | 2026-01-17 | 初始版本，包含7个产品接口和2个动态组件接口 |
