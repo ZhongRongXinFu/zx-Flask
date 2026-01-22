@@ -25,7 +25,7 @@ def get_openid(code):
                 "code": result.get("errcode"),
                 "message": result.get("errmsg")
             }
-        openid = result.get("openid")
+        openid = result.get("unionid")
         session_key = result.get("session_key")
         if not openid: return { "code": 0, "message": "未获取到openid" }
         return { "code": 1, "openid": openid, "session_key": session_key }
