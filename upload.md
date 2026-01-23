@@ -33,6 +33,7 @@ Authorization: Bearer <token>
 | `file` | File | 是 | 要上传的文件 |
 | `category` | String | 否 | 文件分类，用于组织存储目录。默认值: `uploads` |
 | `subcategory` | String | 否 | 二级分类，用于在 category 下创建子目录 |
+| `subsubcategory` | String | 否 | 三级分类，用于在 subcategory 下再创建子目录 |
 | `filename` | String | 否 | 自定义文件名（不含扩展名），扩展名将使用原始文件的扩展名。如果不提供则自动生成 UUID |
 
 #### 请求示例
@@ -56,6 +57,7 @@ curl -X POST https://api.zhongrongxinfu.cn/upload/ \
   -F "filename=my-product-image"
 ```
 
+
 **示例 3：使用二级目录**
 
 ```bash
@@ -68,6 +70,20 @@ curl -X POST https://api.zhongrongxinfu.cn/upload/ \
 ```
 
 上述示例中，文件将被保存到 `product/electronics/item-001.jpg`
+
+**示例 4：使用三级目录**
+
+```bash
+curl -X POST https://api.zhongrongxinfu.cn/upload/ \
+  -H "Authorization: Bearer your_token" \
+  -F "file=@photo.jpg" \
+  -F "category=product" \
+  -F "subcategory=electronics" \
+  -F "subsubcategory=mobile" \
+  -F "filename=item-002"
+```
+
+上述示例中，文件将被保存到 `product/electronics/mobile/item-002.jpg`
 
 #### 成功响应（200）
 
@@ -134,6 +150,7 @@ Authorization: Bearer <token>
 | `files` | File[] | 是 | 多个文件 |
 | `category` | String | 否 | 文件分类。默认值: `uploads` |
 | `subcategory` | String | 否 | 二级分类，用于在 category 下创建子目录 |
+| `subsubcategory` | String | 否 | 三级分类，用于在 subcategory 下再创建子目录 |
 | `filenames` | String (JSON) | 否 | 对应文件的自定义文件名（不含扩展名），支持数组或对象格式 |
 
 #### 文件名格式
@@ -186,6 +203,7 @@ curl -X POST https://api.zhongrongxinfu.cn/upload/batch/ \
   -F 'filenames={"0": "product-main", "1": "product-detail"}'
 ```
 
+
 **示例 4：使用二级目录（数组格式）**
 
 ```bash
@@ -200,6 +218,22 @@ curl -X POST https://api.zhongrongxinfu.cn/upload/batch/ \
 ```
 
 上述示例中，文件将被保存到 `product/electronics/` 下
+
+**示例 5：使用三级目录（数组格式）**
+
+```bash
+curl -X POST https://api.zhongrongxinfu.cn/upload/batch/ \
+  -H "Authorization: Bearer your_token" \
+  -F "files=@image1.jpg" \
+  -F "files=@image2.png" \
+  -F "files=@image3.jpg" \
+  -F "category=product" \
+  -F "subcategory=electronics" \
+  -F "subsubcategory=mobile" \
+  -F 'filenames=["item1", "item2", "item3"]'
+```
+
+上述示例中，文件将被保存到 `product/electronics/mobile/` 下
 
 #### 成功响应（200）
 

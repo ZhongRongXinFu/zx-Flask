@@ -55,7 +55,7 @@ def validate_file(file):
     return True, (file_type, ext)
 
 
-def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None, use_filename=None):
+def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None, subsubcategory=None, use_filename=None):
     """
     内部函数：保存文件到指定路径
     
@@ -87,8 +87,10 @@ def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None
         # 自动生成 UUID
         unique_filename = f"{uuid.uuid4().hex}.{ext}"
     
-    # 构建保存路径
-    if subcategory:
+    # 构建保存路径，支持三级目录
+    if subcategory and subsubcategory:
+        relative_path = os.path.join(category, subcategory, subsubcategory, unique_filename)
+    elif subcategory:
         relative_path = os.path.join(category, subcategory, unique_filename)
     else:
         relative_path = os.path.join(category, unique_filename)
@@ -180,10 +182,11 @@ def upload_file():
     file = request.files['file']
     category = request.form.get('category', 'uploads')  # 默认分类为 uploads
     subcategory = request.form.get('subcategory')  # 可选的二级分类
+    subsubcategory = request.form.get('subsubcategory')  # 可选的三级分类
     custom_filename = request.form.get('filename')  # 可选的自定义文件名
-    
+
     base_dir = os.path.expanduser(UPLOAD_FILE_DIR)
-    success, result = _save_file_to_path(file, None, base_dir, category, subcategory=subcategory, use_filename=custom_filename)
+    success, result = _save_file_to_path(file, None, base_dir, category, subcategory=subcategory, subsubcategory=subsubcategory, use_filename=custom_filename)
     
     if not success:
         return jsonify({"code": 400, "message": result}), 400
@@ -243,6 +246,7 @@ def upload_files_batch():
     files = request.files.getlist('files')
     category = request.form.get('category', 'uploads')
     subcategory = request.form.get('subcategory')  # 可选的二级分类
+    subsubcategory = request.form.get('subsubcategory')  # 可选的三级分类
     filenames_str = request.form.get('filenames')
     
     if not files:
@@ -270,7 +274,7 @@ def upload_files_batch():
         # 获取该文件的自定义文件名（如果有）
         custom_filename = filenames.get(str(idx)) or filenames.get(idx)
         
-        success, result = _save_file_to_path(file, None, base_dir, category, subcategory=subcategory, use_filename=custom_filename)
+        success, result = _save_file_to_path(file, None, base_dir, category, subcategory=subcategory, subsubcategory=subsubcategory, use_filename=custom_filename)
         
         if success:
             success_list.append(result)
