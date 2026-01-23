@@ -778,7 +778,8 @@ data: {"status":"completed","quota_cost":1}
 
 **特殊说明**：
 - 用户消息使用固定文本 `[已上传N个文件，开始分析]`，而不是保存内置系统提示词
-- 所有初始上传的文件都关联到这条用户消息的 `files` 字段
+- 所有初始上传的文件都只关联到这条用户消息的 `files` 字段
+- 后续每条消息只关联本次新上传的文件（如有），不会重复包含历史消息的文件，便于前端精确展示每条消息的附件
 
 #### 错误响应
 
@@ -1248,7 +1249,7 @@ async function sendMessageWithFiles(conversationId, prompt, files) {
   const formData = new FormData();
   formData.append('prompt', prompt);
   
-  // 添加多个文件
+  // 只会把本次新上传的文件作为当前消息的附件
   files.forEach(file => {
     formData.append('files', file);
   });

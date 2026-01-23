@@ -443,47 +443,46 @@ def continue_conversation(conversation_id):
     try:
         # 保存新上传的文件
         files = request.files.getlist("files")
+        new_files = []
         if files:
             new_files = save_uploaded_files(files, conversation_id)
             conversation_files.extend(new_files)
-        
+
         def generate():
             try:
-                # 添加新的用户消息 - 如果有新文件，关联到这条消息
+                # 只将本次新上传的文件关联到当前消息
                 user_message = {"role": "user", "content": prompt}
-                if files and any(f.filename for f in files):
-                    # 只记录本次上传的新文件
-                    new_file_objects = [f for f in conversation_files if isinstance(f, dict)]
-                    if new_file_objects:
-                        user_message["files"] = new_file_objects
+                if new_files:
+                    user_message["files"] = new_files
                 messages.append(user_message)
-                
+
                 # 调用对应的 AI 模型
                 if model == "deepseek":
                     chat_func = deepseek_chat
                 else:
                     chat_func = doubao_chat
-                
+
                 # 流式输出响应
                 yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
-                
+
                 response_text = ""
-                # 提取文件路径用于传给AI模型
-                file_paths = extract_file_paths(conversation_files)
-                for chunk in chat_func(messages=messages, files=file_paths if file_paths else None, user_id=user_id, conversation_id=conversation_id):
+                # 只传递本次新文件和历史所有文件的路径合集给AI，兼容旧格式
+                file_paths = extract_file_paths(new_files) if new_files else None
+                all_file_paths = extract_file_paths(conversation_files)
+                # 兼容：如果AI模型需要所有文件，传all_file_paths，否则传file_paths
+                for chunk in chat_func(messages=messages, files=file_paths if file_paths else all_file_paths, user_id=user_id, conversation_id=conversation_id):
                     chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
                     response_text += chunk_str
                     yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
-                
+
                 # 保存助手响应到数据库
                 messages.append({"role": "assistant", "content": response_text})
                 update_conversation(conversation_id, messages, conversation_files)
-                
+
                 yield f"event: end\ndata: {json.dumps({'status': 'completed'})}\n\n"
-            
             except Exception as e:
                 yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
-        
+
         return Response(
             stream_with_context(generate()),
             mimetype="text/event-stream",
