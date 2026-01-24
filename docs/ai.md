@@ -535,7 +535,7 @@ data: {"status":"completed"}
 
 ### 接口信息
 - **方法**: `DELETE`
-- **路由**: `/ai/chat/delete/<conversation_id>/`
+- **路由**: `/ai/delete/<conversation_id>/`
 - **认证**: 是
 - **描述**: 删除指定的对话记录
 
@@ -547,7 +547,7 @@ data: {"status":"completed"}
 
 ### 请求示例
 ```bash
-curl -X DELETE http://localhost:8000/ai/chat/delete/conv-550e8400-e29b-41d4-a716-446655440000/ \
+curl -X DELETE http://localhost:8000/ai/delete/conv-550e8400-e29b-41d4-a716-446655440000/ \
   -H "Authorization: Bearer <token>"
 ```
 
