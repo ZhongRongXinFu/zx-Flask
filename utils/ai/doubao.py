@@ -16,6 +16,9 @@ client = OpenAI(
     api_key=AI_HUOSHAN_API_KEY,
 )
 
+# model="doubao-seed-1-8-251228"
+model = "doubao-seed-1-6-flash-250828"
+
 def image_to_base64(path: str) -> str:
     """
     把绝对路径的图片转换成 data:image/...;base64,xxxx 字符串
@@ -105,51 +108,100 @@ def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Opti
                     "role": role,
                     "content": [{"type": "input_text", "text": content}]
                 })
-            # 如果是数组（多模态内容），保持原样
+            # 如果是数组（多模态内容），转换为 doubao 格式
             elif isinstance(content, list):
-                input_array.append({
-                    "role": role,
-                    "content": content
-                })
+                converted_content = []
+                for item in content:
+                    if isinstance(item, dict):
+                        item_type = item.get("type")
+                        
+                        # 处理文本内容
+                        if item_type == "text":
+                            converted_content.append({
+                                "type": "input_text",
+                                "text": item.get("text", "")
+                            })
+                        
+                        # 处理图片 URL
+                        elif item_type == "image_url":
+                            image_url_obj = item.get("image_url", {})
+                            url = image_url_obj.get("url") if isinstance(image_url_obj, dict) else str(image_url_obj)
+                            converted_content.append({
+                                "type": "input_image",
+                                "image_url": url
+                            })
+                        
+                        # 处理文档 URL - Doubao 不支持 input_document 类型
+                        elif item_type == "file_url":
+                            file_url_obj = item.get("file_url", {})
+                            url = file_url_obj.get("url") if isinstance(file_url_obj, dict) else str(file_url_obj)
+                            converted_content.append({
+                                "type": "input_file",
+                                "file_url": url
+                            })
+                
+                # 只有有有效内容时才添加
+                if converted_content:
+                    input_array.append({
+                        "role": role,
+                        "content": converted_content
+                    })
     
     # 构建当前用户消息的内容
     current_content = []
     
     # 处理文件上传
     if files:
-        files = [os.path.expanduser(fp) for fp in files]
+        files = [os.path.expanduser(fp) if isinstance(fp, str) else fp for fp in files]
         for fp in files:
-            if not os.path.isfile(fp):
-                continue
-
-            ext = os.path.splitext(fp)[1].lower()
-            upload_path = fp
-
-            # 如果是 Office 文档，先转成 PDF 再上传
-            if ext in OFFICE_EXTS:
-                upload_path = convert_office_to_pdf_sync(fp)
-
-            if is_image(upload_path):
-                # 图片转 base64
-                current_content.append({
-                    "type": "input_image",
-                    "image_url": image_to_base64(upload_path)
-                })
-            else:
-                # 其他文件上传到 doubao
-                file = client.files.create(
-                    file=open(upload_path, "rb"),
-                    purpose="user_data"
-                )
-                # 等待处理完成
-                while getattr(file, 'status', None) == "processing":
-                    time.sleep(2)
-                    file = client.files.retrieve(file.id)
+            # 检查是否为 URL
+            if isinstance(fp, str) and (fp.startswith("http://") or fp.startswith("https://")):
+                # 处理 URL 文件
+                ext = os.path.splitext(fp)[1].lower()
                 
-                current_content.append({
-                    "type": "input_file",
-                    "file_id": file.id
-                })
+                if ext in {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff'}:
+                    # 图片 URL
+                    current_content.append({
+                        "type": "input_image",
+                        "image_url": fp
+                    })
+                elif ext in {'.pdf', '.doc', '.docx'}:
+                    # 文档 URL - Doubao 不支持通过 URL 直接引用文档
+                    # PDF 需要下载本地后通过文件上传 API 处理
+                    pass
+            else:
+                # 处理本地文件
+                if not os.path.isfile(fp):
+                    continue
+
+                ext = os.path.splitext(fp)[1].lower()
+                upload_path = fp
+
+                # 如果是 Office 文档，先转成 PDF 再上传
+                if ext in OFFICE_EXTS:
+                    upload_path = convert_office_to_pdf_sync(fp)
+
+                if is_image(upload_path):
+                    # 图片转 base64
+                    current_content.append({
+                        "type": "input_image",
+                        "image_url": image_to_base64(upload_path)
+                    })
+                else:
+                    # 其他文件上传到 doubao
+                    file = client.files.create(
+                        file=open(upload_path, "rb"),
+                        purpose="user_data"
+                    )
+                    # 等待处理完成
+                    while getattr(file, 'status', None) == "processing":
+                        time.sleep(2)
+                        file = client.files.retrieve(file.id)
+                    
+                    current_content.append({
+                        "type": "input_file",
+                        "file_id": file.id
+                    })
     
     # 添加文本提示
     if prompt:
@@ -174,7 +226,7 @@ def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Opti
     
     # 调用 API
     response = client.responses.create(
-        model="doubao-seed-1-8-251228",
+        model=model,
         input=input_array,
         extra_body={"thinking": {"type": think}},
         stream=True,
@@ -270,7 +322,7 @@ def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Opti
                         AIUsageTracker.log_usage(
                             user_id=user_id,
                             conversation_id=conversation_id,
-                            model_key="doubao-seed-1-8-251228",
+                            model_key=model,
                             provider="doubao",
                             input_tokens=input_tokens,
                             output_tokens=output_tokens,

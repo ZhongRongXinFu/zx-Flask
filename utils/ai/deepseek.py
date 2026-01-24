@@ -5,7 +5,7 @@ from settings import AI_DEEPSEEK_API_KEY
 
 import os
 import base64
-from typing import Optional
+from typing import Optional, List
 from openai import OpenAI
 from utils.ai.usage_tracker import AIUsageTracker
 
@@ -19,6 +19,47 @@ def encode_image(image_path: str) -> str:
     """将图片文件编码为 base64 字符串"""
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
+
+
+def _content_to_text_list(parts: List) -> List[str]:
+    """把多模态内容转换为纯文本片段，DeepSeek 不支持 image_url/file_url。"""
+    texts = []
+    for part in parts:
+        if isinstance(part, str):
+            if part:
+                texts.append(part)
+            continue
+        if not isinstance(part, dict):
+            texts.append(str(part))
+            continue
+
+        ptype = part.get("type")
+        if ptype == "text" and isinstance(part.get("text"), str):
+            texts.append(part["text"])
+            continue
+        if ptype == "image_url":
+            url = ""
+            if isinstance(part.get("image_url"), dict):
+                url = part.get("image_url", {}).get("url", "")
+            elif isinstance(part.get("url"), str):
+                url = part.get("url")
+            texts.append(f"[图片] {url}".strip())
+            continue
+        if ptype == "file_url":
+            url = ""
+            if isinstance(part.get("file_url"), dict):
+                url = part.get("file_url", {}).get("url", "")
+            elif isinstance(part.get("url"), str):
+                url = part.get("url")
+            texts.append(f"[文件] {url}".strip())
+            continue
+
+        # 兜底
+        if isinstance(part.get("text"), str):
+            texts.append(part.get("text"))
+        else:
+            texts.append(str(part))
+    return texts
 
 
 def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Optional[str] = None, conversation_id: Optional[str] = None):
@@ -42,45 +83,39 @@ def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Opti
     else:
         # 深拷贝消息列表，避免修改原列表
         messages = [dict(m) for m in messages]
+
+    # 将历史消息中的多模态内容转换为纯文本
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            texts = _content_to_text_list(content)
+            msg["content"] = "\n".join(t for t in texts if t)
     
     # 如果提供了新的 prompt，添加到消息列表
     if prompt:
-        # 构建用户消息内容
+        # 构建用户消息内容（纯文本）
+        texts = []
         if files:
-            # 多模态内容
-            content = []
             for file_path in files:
-                file_path = os.path.expanduser(file_path)
-                if not os.path.exists(file_path):
-                    continue
-                
-                # DeepSeek 支持图片
-                ext = os.path.splitext(file_path)[1].lower()
-                if ext in {'.jpg', '.jpeg', '.png', '.gif', '.webp'}:
-                    try:
-                        base64_image = encode_image(file_path)
-                        content.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
-                        })
-                    except Exception:
-                        pass
-            
-            # 添加文本提示
-            if content:
-                content.append({
-                    "type": "text",
-                    "text": prompt
-                })
-                messages.append({"role": "user", "content": content})
-            else:
-                # 没有有效的文件，只添加文本
-                messages.append({"role": "user", "content": prompt})
-        else:
-            # 仅文本内容
-            messages.append({"role": "user", "content": prompt})
+                label = "文件"
+                url = ""
+                if isinstance(file_path, str) and (file_path.startswith('http://') or file_path.startswith('https://')):
+                    url = file_path
+                    ext = os.path.splitext(file_path)[1].lower()
+                    if ext in {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}:
+                        label = "图片"
+                else:
+                    file_path = os.path.expanduser(file_path)
+                    if not os.path.exists(file_path):
+                        continue
+                    url = file_path
+                    ext = os.path.splitext(file_path)[1].lower()
+                    if ext in {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}:
+                        label = "图片"
+                texts.append(f"[{label}] {url}".strip())
+
+        texts.append(prompt)
+        messages.append({"role": "user", "content": "\n".join(t for t in texts if t)})
     
     # 调用 API
     stream = client.chat.completions.create(

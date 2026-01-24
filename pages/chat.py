@@ -12,12 +12,11 @@ from utils.conversation import (
     create_conversation,
     get_conversation,
     update_conversation,
-    # append_message,
     list_conversations,
     delete_conversation
 )
 from utils.ai.deepseek import chat as deepseek_chat
-from utils.ai.doubao_neo import chat as doubao_chat
+from utils.ai.doubao import chat as doubao_chat
 from utils.ai.ai import validate_file_ext, validate_file_size
 from utils.login import login_required
 from settings import PRODUCT_IMAGE_DIR

@@ -309,7 +309,7 @@ def validate_and_prepare_files(file_urls=None, file_names=None, conversation_id=
     ]
     """
     ALLOWED_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
-    ALLOWED_PDF_EXTS = {'.pdf'}
+    ALLOWED_PDF_EXTS = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.md', '.csv'}
     ALLOWED_ALL = ALLOWED_IMAGE_EXTS | ALLOWED_PDF_EXTS
     
     result = []
@@ -462,13 +462,12 @@ def extract_file_paths(file_objects: list) -> list:
 @ai_page.route("/chat/new/", methods=["POST"])
 @login_required
 def new_conversation():
-    """创建新对话"""
+    """创建新对话（仅创建会话，返回会话ID）"""
     user_id = g.current_user["uuid"]
     data = request.get_json() or {}
     
     model = data.get("model", "deepseek")
     title = data.get("title", "新对话")
-    prompt = data.get("prompt", "")
     
     # 验证模型
     if model not in {"deepseek", "doubao"}:
@@ -477,85 +476,6 @@ def new_conversation():
     # 创建对话
     conversation = create_conversation(user_id, model, title)
     conversation_id = conversation["id"]
-    
-    # 如果有初始消息，保存文件并开始对话
-    if prompt:
-        try:
-            # 仅支持公网URL
-            file_urls = data.get("file_urls") or []
-            file_names = data.get("file_names") or []
-            
-            # 确保是列表
-            if isinstance(file_urls, str):
-                file_urls = [file_urls]
-            if isinstance(file_names, str):
-                file_names = [file_names]
-            
-            # 验证并准备文件（仅处理URL）
-            file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id)
-            
-            # 将文件对象转换为数据库保存格式（只保存信息，不保存文件路径）
-            db_files = []
-            for obj in file_objects:
-                if obj["type"] == "local_file":
-                    db_files.append({"path": obj["path"], "original_name": obj["original_name"]})
-                elif obj["type"] == "image_url":
-                    db_files.append({"url": obj["url"], "type": "image_url"})
-                elif obj["type"] == "file_url":
-                    db_files.append({"url": obj["url"], "type": "file_url"})
-            
-            # 保存到数据库
-            if db_files:
-                update_conversation(conversation_id, [], db_files)
-            
-            def generate():
-                try:
-                    # 构建消息 - 将文件对象关联到用户消息中
-                    user_message = {"role": "user", "content": prompt}
-                    if file_objects:
-                        user_message["files"] = file_objects
-                    messages = [user_message]
-                    
-                    # 调用对应的 AI 模型
-                    if model == "deepseek":
-                        chat_func = deepseek_chat
-                    else:
-                        chat_func = doubao_chat
-                    
-                    # 准备AI模型所需的文件参数
-                    ai_files = prepare_files_for_ai_model(file_objects)
-                    
-                    # 流式输出响应
-                    yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
-                    
-                    response_text = ""
-                    # 传递文件参数给AI模型（直接使用URL，不需要本地路径）
-                    for chunk in chat_func(messages=messages, images=ai_files.get("images"), files=ai_files.get("files"), user_id=user_id, conversation_id=conversation_id):
-                        chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
-                        response_text += chunk_str
-                        yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
-                    
-                    # 保存对话到数据库
-                    messages.append({"role": "assistant", "content": response_text})
-                    update_conversation(conversation_id, messages, db_files)
-                    
-                    yield f"event: end\ndata: {json.dumps({'status': 'completed'})}\n\n"
-                    
-                    yield f"event: end\ndata: {json.dumps({'status': 'completed'})}\n\n"
-                
-                except Exception as e:
-                    yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
-            
-            return Response(
-                stream_with_context(generate()),
-                mimetype="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-            )
-        
-        except ValueError as e:
-            return jsonify({"code": 400, "message": str(e)})
-        except Exception as e:
-            return jsonify({"code": 500, "message": f"处理失败: {str(e)}"})
     
     return jsonify({
         "code": 0,
@@ -602,26 +522,56 @@ def continue_conversation(conversation_id):
         # 验证并准备新的文件
         new_file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id)
         
-        # 转换为数据库格式
+        # 转换为数据库格式，保留原始文件名便于审计
         new_db_files = []
         for obj in new_file_objects:
             if obj["type"] == "local_file":
                 new_db_files.append({"path": obj["path"], "original_name": obj["original_name"]})
             elif obj["type"] == "image_url":
-                new_db_files.append({"url": obj["url"], "type": "image_url"})
+                new_db_files.append({"url": obj["url"], "type": "image_url", "original_name": obj.get("original_name")})
             elif obj["type"] == "file_url":
-                new_db_files.append({"url": obj["url"], "type": "file_url"})
+                new_db_files.append({"url": obj["url"], "type": "file_url", "original_name": obj.get("original_name")})
         
         # 扩展会话文件列表
         if new_db_files:
             conversation_files.extend(new_db_files)
 
         def generate():
-            try:
-                # 将本次新上传的文件关联到当前消息
-                user_message = {"role": "user", "content": prompt}
+            # try:
+                # 构建用户消息 - 如果有文件，需要构建多模态内容格式
                 if new_file_objects:
-                    user_message["files"] = new_file_objects
+                    # 对 deepseek 强制纯文本描述；其他模型保留多模态
+                    if model == "deepseek":
+                        desc = []
+                        for fo in new_file_objects:
+                            if fo.get("type") == "image_url":
+                                desc.append(f"[图片] {fo.get('url')}")
+                            elif fo.get("type") == "file_url":
+                                desc.append(f"[文件] {fo.get('url')}")
+                        desc.append(prompt)
+                        user_message = {"role": "user", "content": "\n".join([d for d in desc if d])}
+                    else:
+                        content = []
+                        for file_obj in new_file_objects:
+                            if file_obj.get("type") == "image_url":
+                                content.append({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": file_obj.get("url")
+                                    }
+                                })
+                            elif file_obj.get("type") == "file_url":
+                                content.append({
+                                    "type": "file_url",
+                                    "file_url": {
+                                        "url": file_obj.get("url")
+                                    }
+                                })
+                        content.append({"type": "text", "text": prompt})
+                        user_message = {"role": "user", "content": content}
+                else:
+                    user_message = {"role": "user", "content": prompt}
+                
                 messages.append(user_message)
 
                 # 调用对应的 AI 模型
@@ -634,10 +584,8 @@ def continue_conversation(conversation_id):
                 yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
 
                 response_text = ""
-                # 准备所有文件的AI参数
-                all_ai_files = prepare_files_for_ai_model(new_file_objects) if new_file_objects else {"images": None, "files": None}
-                
-                for chunk in chat_func(messages=messages, images=all_ai_files.get("images"), files=all_ai_files.get("files"), user_id=user_id, conversation_id=conversation_id):
+                # 不通过 files 参数，因为文件已在 messages 中
+                for chunk in chat_func(messages=messages, user_id=user_id, conversation_id=conversation_id):
                     chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
                     response_text += chunk_str
                     yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
@@ -647,8 +595,8 @@ def continue_conversation(conversation_id):
                 update_conversation(conversation_id, messages, conversation_files)
 
                 yield f"event: end\ndata: {json.dumps({'status': 'completed'})}\n\n"
-            except Exception as e:
-                yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+            # except Exception as e:
+            #     yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
 
         return Response(
             stream_with_context(generate()),
@@ -1625,139 +1573,31 @@ def start_analysis(session_id):
 @ai_page.route("/analyze/new/", methods=["POST"])
 @login_required
 def new_analysis():
-    """创建新的数据分析会话（需上传文件，使用内置提示词）"""
+    """创建新的数据分析会话（仅创建会话，返回会话ID）"""
     user_id = g.current_user["uuid"]
     model = "doubao"  # 数据分析模型固定为豆包
     data = request.get_json() or {}
     analysis_type = data.get("analysis_type", "personal")  # personal or company
     title = data.get("title", "新分析")
-    custom_instruction = ""  # 初始分析不接受自定义提示词
     
     # 验证参数
     if analysis_type not in {"personal", "company"}:
         return jsonify({"code": 400, "message": "不支持的分析类型，支持: personal, company"})
     
-    # 仅支持公网URL
-    file_urls = data.get("file_urls") or []  # 支持多个URL
-    file_names = data.get("file_names") or []  # 对应的文件原名
-    
-    # 确保是列表
-    if isinstance(file_urls, str):
-        file_urls = [file_urls]
-    if isinstance(file_names, str):
-        file_names = [file_names]
-    
-    if not file_urls:
-        return jsonify({"code": 400, "message": "分析必须提供文件URL"})
-    
-    # 检查用户配额
-    has_enough, current_quota = check_analysis_quota(user_id, analysis_type)
-    quota_cost = 1 if analysis_type == "personal" else 2
-    
-    if not has_enough:
-        return jsonify({
-            "code": 402,
-            "message": "配额不足",
-            "data": {
-                "required": quota_cost,
-                "current": current_quota
-            }
-        })
-    
     # 创建对话（使用 analysis_type）
     conversation = create_conversation(user_id, model, title, analysis_type)
     conversation_id = conversation["id"]
     
-    # 获取分析提示词（仅内置提示词）
-    system_prompt = get_analysis_prompt(analysis_type, custom_instruction)
-    
-    # 开始分析
-    try:
-        # 验证并准备文件（仅支持URL）
-        file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id)
-        
-        if not file_objects:
-            return jsonify({"code": 400, "message": "必须上传至少一个文件或提供URL"})
-        
-        # 转换为数据库格式
-        db_files = []
-        for obj in file_objects:
-            if obj["type"] == "local_file":
-                db_files.append({"path": obj["path"], "original_name": obj["original_name"]})
-            elif obj["type"] == "image_url":
-                db_files.append({"url": obj["url"], "type": "image_url"})
-            elif obj["type"] == "file_url":
-                db_files.append({"url": obj["url"], "type": "file_url"})
-        
-        # 保存到数据库
-        if db_files:
-            update_conversation(conversation_id, [], db_files)
-        
-        def generate():
-            try:
-                # 先扣除配额
-                if not deduct_analysis_quota(user_id, analysis_type):
-                    yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': '配额扣除失败'})}\n\n"
-                    return
-                
-                # 构建消息（插入系统提示词）- 将文件关联到用户消息
-                user_message = {"role": "user", "content": "请对我上传的文件进行分析。"}
-                if file_objects:
-                    user_message["files"] = file_objects
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    user_message
-                ]
-                
-                # 调用豆包模型
-                chat_func = doubao_chat
-                
-                # 流式输出响应
-                yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started', 'analysis_type': analysis_type})}\n\n"
-                
-                response_text = ""
-                start_time = time.time()
-                first_token_sent = False
-                print(f"\n[分析开始] 会话ID: {conversation_id}, 类型: {analysis_type}")
-                
-                # 准备AI模型所需的文件参数（直接使用URL）
-                ai_files = prepare_files_for_ai_model(file_objects)
-                for chunk in chat_func(messages=messages, images=ai_files.get("images"), files=ai_files.get("files"), user_id=user_id, conversation_id=conversation_id):
-                    chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
-                    response_text += chunk_str
-                    if not first_token_sent:
-                        first_token_sent = True
-                        elapsed_ms = int((time.time() - start_time) * 1000)
-                        yield f"event: progress\ndata: {json.dumps({'stage': 'first_token', 'elapsed_ms': elapsed_ms})}\n\n"
-                    print(chunk_str, end='', flush=True)  # 实时打印AI输出
-                    yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
-                print(f"\n[分析完成] 总字数: {len(response_text)}")
-                
-                # 保存对话到数据库（不保存系统提示词，只保存用户和助手消息）
-                user_message_to_save = {"role": "user", "content": "请对我上传的文件进行分析。"}
-                if file_objects:
-                    user_message_to_save["files"] = file_objects
-                messages_to_save = [
-                    user_message_to_save,
-                    {"role": "assistant", "content": response_text}
-                ]
-                update_conversation(conversation_id, messages_to_save, db_files)
-                
-                yield f"event: end\ndata: {json.dumps({'status': 'completed', 'quota_cost': quota_cost})}\n\n"
-            
-            except Exception as e:
-                yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
-        
-        return Response(
-            stream_with_context(generate()),
-            mimetype="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-        )
-    
-    except ValueError as e:
-        return jsonify({"code": 400, "message": str(e)})
-    except Exception as e:
-        return jsonify({"code": 500, "message": f"处理失败: {str(e)}"})
+    return jsonify({
+        "code": 0,
+        "data": {
+            "conversation_id": conversation_id,
+            "user_id": user_id,
+            "model": model,
+            "analysis_type": analysis_type,
+            "title": title
+        }
+    })
 
 
 @ai_page.route("/analyze/session/<session_id>/continue/", methods=["POST"])
@@ -1836,10 +1676,33 @@ def continue_analysis(session_id):
                 # 获取分析提示词
                 system_prompt = get_analysis_prompt(analysis_type)
                 
-                # 添加新的用户消息 - 如果有新文件，关联到这条消息
-                user_message = {"role": "user", "content": prompt}
+                # 构建用户消息 - 如果有文件，需要构建多模态内容格式
                 if new_file_objects:
-                    user_message["files"] = new_file_objects
+                    # 多模态内容：包含文件URL和文本提示
+                    content = []
+                    
+                    # 添加文件内容 - 只支持图片URL（PDF暂不支持）
+                    for file_obj in new_file_objects:
+                        if file_obj.get("type") == "image_url":
+                            content.append({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": file_obj.get("url")
+                                }
+                            })
+                        # file_url（PDF等）暂不支持通过URL直接处理
+                    
+                    # 添加文本提示
+                    content.append({
+                        "type": "text",
+                        "text": prompt
+                    })
+                    
+                    user_message = {"role": "user", "content": content}
+                else:
+                    # 仅文本内容
+                    user_message = {"role": "user", "content": prompt}
+                
                 messages.append(user_message)
                 
                 # 调用豆包模型
@@ -1856,9 +1719,8 @@ def continue_analysis(session_id):
                 first_token_sent = False
                 print(f"\n[继续分析] 会话ID: {session_id}, 类型: {analysis_type}")
                 
-                # 准备AI模型所需的文件参数
-                ai_files = prepare_files_for_ai_model(new_file_objects) if new_file_objects else {"images": None, "files": None}
-                for chunk in chat_func(messages=messages_with_system, images=ai_files.get("images"), files=ai_files.get("files"), user_id=user_id, conversation_id=session_id):
+                # 不通过 files 参数，因为文件已在 messages 中
+                for chunk in chat_func(messages=messages_with_system, user_id=user_id, conversation_id=session_id):
                     chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
                     response_text += chunk_str
                     if not first_token_sent:
