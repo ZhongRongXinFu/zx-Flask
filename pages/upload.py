@@ -5,10 +5,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import os
 import uuid
 import time
+import shutil
 from datetime import datetime
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 from settings import UPLOAD_FILE_DIR
-from utils.login import login_required
+from utils.login import login_required, op_required
 from utils.ai.pdfmaker import submit_convert, query_task, OFFICE_EXTS
 
 upload_page = Blueprint('upload', __name__)
@@ -409,3 +410,134 @@ def get_upload_config():
             "base_url": "https://static.zhongrongxinfu.cn"
         }
     }), 200
+
+
+@upload_page.route("/delete/", methods=["DELETE"])
+@login_required
+def delete_file():
+    """
+    删除文件或目录接口
+    
+    权限说明：
+        - 管理员（is_op=1）：可以删除任何路径下的文件或目录
+        - 普通用户：只能删除以下路径：
+            1. /ai-chat/<用户uuid>/ 下的所有文件和子目录
+            2. /avatar/<用户uuid>.jpg/png/gif等图片格式
+    
+    请求参数：
+        - path: 要删除的文件或目录路径（相对于上传基目录）
+                例如: "ai-chat/12345678-1234-1234-1234-123456789abc"
+                      "avatar/user-123.jpg"
+    
+    返回：
+        删除成功：
+        {
+            "code": 0,
+            "message": "删除成功",
+            "data": {
+                "path": "ai-chat/user-uuid",
+                "deleted_type": "directory",  # 或 "file"
+                "deleted_items": 5  # 如果是目录，显示删除的文件数
+            }
+        }
+        
+        权限不足：
+        {
+            "code": 403,
+            "message": "权限不足，无法删除该路径"
+        }
+        
+        文件不存在：
+        {
+            "code": 404,
+            "message": "文件或目录不存在"
+        }
+    """
+    user_id = g.current_user["uuid"]
+    is_admin = str(g.current_user.get("is_op", "0")) == "1"
+    
+    # 获取要删除的路径
+    path = request.json.get("path") if request.is_json else request.form.get("path")
+    path = path.replace("https://api.zhongrongxinfu.cn/", "")
+    if path.startswith("/"):
+        path = path[1:]
+    
+    if not path:
+        return jsonify({"code": 400, "message": "请提供要删除的路径"}), 400
+    
+    # 防止路径遍历攻击
+    path = path.strip('/')
+    if '..' in path or path.startswith('/'):
+        return jsonify({"code": 400, "message": "非法的路径"}), 400
+    
+    base_dir = os.path.expanduser(UPLOAD_FILE_DIR)
+    full_path = os.path.join(base_dir, path)
+    
+    # 确保解析后的路径仍在基目录内
+    real_full_path = os.path.realpath(full_path)
+    real_base_dir = os.path.realpath(base_dir)
+    if not real_full_path.startswith(real_base_dir):
+        return jsonify({"code": 403, "message": "权限不足，无法删除该路径"}), 403
+    
+    # 权限检查（非管理员）
+    if not is_admin:
+        # 检查是否是允许的路径
+        allowed = False
+        
+        # 检查 ai-chat/<用户uuid>/ 路径
+        if path.startswith(f"ai-chat/{user_id}"):
+            allowed = True
+        
+        # 检查 avatar/<用户uuid>.<图片扩展名> 路径
+        elif path.startswith(f"avatar/{user_id}."):
+            # 获取文件扩展名
+            _, ext = os.path.splitext(path)
+            if ext.lower() in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.svg', '.ico']:
+                allowed = True
+        
+        if not allowed:
+            return jsonify({"code": 403, "message": "权限不足，无法删除该路径"}), 403
+    
+    # 检查文件/目录是否存在
+    if not os.path.exists(full_path):
+        return jsonify({"code": 404, "message": "文件或目录不存在"}), 404
+    
+    try:
+        deleted_type = None
+        deleted_items = 0
+        
+        if os.path.isfile(full_path):
+            # 删除单个文件
+            os.remove(full_path)
+            deleted_type = "file"
+            deleted_items = 1
+        elif os.path.isdir(full_path):
+            # 删除目录及其所有内容
+            deleted_items = _count_items_recursive(full_path)
+            shutil.rmtree(full_path)
+            deleted_type = "directory"
+        
+        return jsonify({
+            "code": 0,
+            "message": "删除成功",
+            "data": {
+                "path": path,
+                "deleted_type": deleted_type,
+                "deleted_items": deleted_items
+            }
+        }), 200
+    
+    except Exception as e:
+        print(f"删除文件失败: {str(e)}")
+        return jsonify({"code": 500, "message": f"删除失败: {str(e)}"}), 500
+
+
+def _count_items_recursive(directory):
+    """递归计算目录中的文件数（包括子目录中的文件）"""
+    count = 0
+    try:
+        for root, dirs, files in os.walk(directory):
+            count += len(files)
+    except:
+        pass
+    return count
