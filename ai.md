@@ -1,66 +1,38 @@
 # AI 接口 API 文档
 
-**更新时间**: 2026年1月22日
+**更新时间**: 2026年1月24日
 
-## 重要变更说明 (2026-01-22)
+## 重要变更说明 (2026-01-24)
 
-### 📌 附件关联优化 - 支持原始文件名记录
+### 📌 仅支持公网URL - 文件需传入原名
 
-为了让前端能够准确展示哪些文件属于哪条消息，以及显示原始文件名，我们对消息数据结构进行了优化：
+系统现已升级为**仅支持公网URL**的方式传入文件，用户需要同时传入文件的URL和对应的文件原名：
 
-**旧版本**（不推荐）：
+**新版本使用方式**：
 ```json
 {
-  "messages": [
-    {"role": "user", "content": "请分析这个文件"},
-    {"role": "assistant", "content": "好的..."}
+  "file_urls": [
+    "https://example.com/report.pdf",
+    "https://cdn.example.com/image.jpg"
   ],
-  "files": ["file1.pdf", "file2.png"]  // 仅路径，不知道属于哪条消息，也没有原始文件名
+  "file_names": [
+    "销售报告2026.pdf",
+    "数据展示图.jpg"
+  ]
 }
 ```
 
-**新版本**（推荐）：
-```json
-{
-  "messages": [
-    {
-      "role": "user", 
-      "content": "请分析这个文件",
-      "files": [
-        {
-          "path": "~/Desktop/zhongxin/flask/static/chat-uploads/conv-xxx/abc123.pdf",
-          "original_name": "销售报告2026.pdf"  // ← 新增：原始文件名
-        },
-        {
-          "path": "~/Desktop/zhongxin/flask/static/chat-uploads/conv-xxx/def456.png",
-          "original_name": "data-chart.png"  // ← 新增：原始文件名
-        }
-      ]  // 关联到这条用户消息
-    },
-    {"role": "assistant", "content": "好的，我看到您上传了..."}
-  ],
-  "files": [
-    {
-      "path": "~/Desktop/zhongxin/flask/static/chat-uploads/conv-xxx/abc123.pdf",
-      "original_name": "销售报告2026.pdf"
-    },
-    {
-      "path": "~/Desktop/zhongxin/flask/static/chat-uploads/conv-xxx/def456.png",
-      "original_name": "data-chart.png"
-    }
-  ]  // 保留用于向后兼容
-}
-```
+**参数说明**：
+- `file_urls`: 文件的公网URL列表（必须是 http:// 或 https:// 开头）
+- `file_names`: 对应的文件原名列表（必须与 file_urls 一一对应）
+- **支持的格式**: 仅 PDF 和图片文件（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）
 
-**前端适配建议**：
-1. **优先读取消息内的 `files` 字段**：遍历 `messages` 数组，如果消息有 `files` 字段，则显示在该消息旁边
-2. **显示原始文件名**：使用 `files[].original_name` 作为UI展示，这是用户上传时的原始文件名
-3. **使用路径加载文件**：实际加载或下载时使用 `files[].path`
-4. **兼容旧数据**：如果某条消息没有 `files` 字段，可以回退到使用会话级别的 `files` 数组
-
-**数据结构说明**：
-- `messages[].files[].path`: 文件的完整存储路径（后端使用）
-- `messages[].files[].original_name`: 用户上传时的原始文件名（前端展示）
+**关键特性**：
+- ✅ 无需下载和本地保存
+- ✅ 直接传输URL到AI模型
+- ✅ 支持CDN和云存储链接
+- ✅ 文件类型严格限制（仅PDF和图片）
+- ⚠️ URL必须公开可访问（不支持认证链接）
 
 ## 环境配置
 
@@ -345,23 +317,50 @@ curl -X DELETE http://localhost:8000/ai/conversation/deleteall/ \
 | model | string | 否 | AI模型，可选值: `deepseek`、`doubao`，默认 `deepseek` |
 | title | string | 否 | 会话标题，默认 "新对话" |
 | prompt | string | 否 | 初始消息内容 |
-| files | file | 否 | 附加文件（可多个） |
+| file_urls | string | 否 | 文件的公网URL（可多个） |
+| file_names | string | 否 | 对应的文件原名（必须与file_urls一一对应） |
+
+**支持的文件格式**: PDF、图片格式（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）
 
 ### 请求示例
 ```bash
 # 创建空对话
 curl -X POST http://localhost:8000/ai/chat/new/ \
   -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "model=deepseek&title=数据分析"
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek",
+    "title": "数据分析"
+  }'
 
-# 创建对话并发送初始消息（流式响应）
+# 创建对话并发送初始消息（带URL文件，流式响应）
 curl -X POST http://localhost:8000/ai/chat/new/ \
   -H "Authorization: Bearer <token>" \
-  -F "model=deepseek" \
-  -F "title=PDF分析" \
-  -F "prompt=请帮我分析这个PDF文件" \
-  -F "files=@/path/to/file.pdf"
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek",
+    "title": "PDF分析",
+    "prompt": "请帮我分析这个PDF文件",
+    "file_urls": ["https://example.com/report.pdf"],
+    "file_names": ["销售报告2026.pdf"]
+  }'
+
+# 多个文件示例
+curl -X POST http://localhost:8000/ai/chat/new/ \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek",
+    "prompt": "请对比分析这两个文件",
+    "file_urls": [
+      "https://cdn1.com/v1.pdf",
+      "https://cdn2.com/v2.jpg"
+    ],
+    "file_names": [
+      "版本1.pdf",
+      "图表对比.jpg"
+    ]
+  }'
 ```
 
 ### 返回数据类型
@@ -446,22 +445,36 @@ data: {"status":"completed"}
 |------|------|------|------|
 | conversation_id | string | 是 | 会话的唯一标识符 |
 | prompt | string | 是 | 用户消息内容 |
-| files | file | 否 | 新增附加文件（可多个） |
+| file_urls | string | 否 | 文件的公网URL（可多个） |
+| file_names | string | 否 | 对应的文件原名（必须与file_urls一一对应） |
+
+**支持的文件格式**: PDF、图片格式（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）
 
 ### 请求示例
 ```bash
 # 发送简单消息
 curl -X POST http://localhost:8000/ai/chat/continue/conv-550e8400-e29b-41d4-a716-446655440000/ \
   -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "prompt=请继续分析下一部分内容"
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "请继续分析下一部分内容"
+  }'
 
-# 发送消息并上传新文件（流式响应）
+# 发送消息并附加文件URL（流式响应）
 curl -X POST http://localhost:8000/ai/chat/continue/conv-550e8400-e29b-41d4-a716-446655440000/ \
   -H "Authorization: Bearer <token>" \
-  -F "prompt=请对这两个文件进行对比分析" \
-  -F "files=@/path/to/file1.pdf" \
-  -F "files=@/path/to/file2.pdf"
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "请对这两个文件进行对比分析",
+    "file_urls": [
+      "https://example.com/file1.pdf",
+      "https://example.com/file2.jpg"
+    ],
+    "file_names": [
+      "文件A.pdf",
+      "对比图表.jpg"
+    ]
+  }'
 ```
 
 ### 返回数据类型
@@ -563,12 +576,12 @@ curl -X DELETE http://localhost:8000/ai/chat/delete/conv-550e8400-e29b-41d4-a716
 
 ---
 
-## 文件分析接口（新版 - 推荐）
+## 文件分析接口
 
-新版分析接口采用三步走流程，提供更灵活的文件管理：
-1. 创建分析会话
-2. 上传文件（可多次上传）
-3. 开始分析
+分析接口支持快速分析模式（一步完成），以及会话管理模式（灵活追加文件）：
+
+**快速分析** (`/ai/analyze/new/`)：直接传入文件URL，一步完成分析
+**会话管理** (`/ai/analyze/session/`系列)：创建会话 → 上传文件 → 继续分析
 
 ### 8. 创建分析会话
 
@@ -576,7 +589,7 @@ curl -X DELETE http://localhost:8000/ai/chat/delete/conv-550e8400-e29b-41d4-a716
 - **方法**: `POST`
 - **路由**: `/ai/analyze/session/create/`
 - **认证**: 是
-- **描述**: 创建一个新的分析会话（第一步）
+- **描述**: 创建一个新的分析会话
 
 ### 请求参数
 
@@ -647,23 +660,45 @@ curl -X POST http://localhost:8000/ai/analyze/session/create/ \
 | 参数 | 类型 | 必须 | 说明 |
 |------|------|------|------|
 | session_id | string | 是 | 会话ID（URL路径参数） |
-| files | file | 是 | 要上传的文件（支持多个） |
+| file_urls | string | 是 | 文件的公网URL（可多个） |
+| file_names | string | 是 | 对应的文件原名（必须与file_urls一一对应） |
 
-**支持的文件格式**: PDF、Word、Excel、文本文件等（最大50MB）
+**支持的文件格式**: PDF、图片格式（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）
 
 ### 请求示例
 ```bash
-# 单次上传多个文件
+# 单个文件
 curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
   -H "Authorization: Bearer <token>" \
-  -F "files=@/path/to/file1.pdf" \
-  -F "files=@/path/to/file2.xlsx" \
-  -F "files=@/path/to/file3.docx"
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_urls": ["https://example.com/report.pdf"],
+    "file_names": ["年度报告2025.pdf"]
+  }'
+
+# 多个文件
+curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_urls": [
+      "https://cdn1.com/file1.pdf",
+      "https://cdn2.com/file2.jpg"
+    ],
+    "file_names": [
+      "年度报告2025.pdf",
+      "销售图表.jpg"
+    ]
+  }'
 
 # 多次上传（灵活追加文件）
 curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
   -H "Authorization: Bearer <token>" \
-  -F "files=@/path/to/additional_file.pdf"
+  -H "Content-Type: application/json" \
+  -d '{
+    "file_urls": ["https://example.com/additional.pdf"],
+    "file_names": ["补充文档.pdf"]
+  }'
 ```
 
 ### 返回数据类型
@@ -675,20 +710,18 @@ curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
   "message": "文件已上传",
   "data": {
     "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "uploaded_count": 3,
-    "total_count": 3,
+    "uploaded_count": 2,
+    "total_count": 2,
     "uploaded_files": [
       {
-        "path": "~/Desktop/zhongxin/flask/static/chat-uploads/550e8400-xxx/abc123.pdf",
+        "url": "https://example.com/file1.pdf",
+        "type": "file_url",
         "original_name": "年度报告2025.pdf"
       },
       {
-        "path": "~/Desktop/zhongxin/flask/static/chat-uploads/550e8400-xxx/def456.xlsx",
-        "original_name": "销售数据.xlsx"
-      },
-      {
-        "path": "~/Desktop/zhongxin/flask/static/chat-uploads/550e8400-xxx/ghi789.docx",
-        "original_name": "分析文档.docx"
+        "url": "https://example.com/file2.jpg",
+        "type": "image_url",
+        "original_name": "销售图表.jpg"
       }
     ]
   }
@@ -699,7 +732,7 @@ curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
 
 | 错误码 | 说明 |
 |-------|------|
-| 400 | 未选择文件、文件格式不支持或文件过大 |
+| 400 | URL格式错误、文件名不匹配或文件类型不支持 |
 | 401 | 未登陆 |
 | 404 | 会话不存在或无权访问 |
 
@@ -709,25 +742,53 @@ curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
 
 ### 接口信息
 - **方法**: `POST`
-- **路由**: `/ai/analyze/session/<session_id>/start/`
+- **路由**: `/ai/analyze/new/`
 - **认证**: 是
-- **描述**: 基于已上传的所有文件开始分析（第三步，使用内置提示词）
+- **描述**: 创建分析会话并开始分析（一步完成，包含文件和初始分析）
 
 ### 请求参数
 
 | 参数 | 类型 | 必须 | 说明 |
 |------|------|------|------|
-| session_id | string | 是 | 会话ID（URL路径参数） |
+| analysis_type | string | 否 | 分析类型：`personal`或`company`，默认 `personal` |
+| title | string | 否 | 会话标题，默认 "新分析" |
+| file_urls | string | 是 | 文件的公网URL（可多个） |
+| file_names | string | 是 | 对应的文件原名（必须与file_urls一一对应） |
 
-**注意事项**:
-- 此接口会扣除用户配额（personal=1，company=2）
-- 必须先通过上传接口上传至少一个文件
-- 每个会话只能调用一次 start 接口，后续使用 continue 接口追问
+**支持的文件格式**: PDF、图片格式（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）
+
+**配额消耗**:
+- `personal`: 消耗1配额
+- `company`: 消耗2配额
 
 ### 请求示例
 ```bash
-curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/start/ \
-  -H "Authorization: Bearer <token>"
+# 单个文件分析
+curl -X POST http://localhost:8000/ai/analyze/new/ \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "analysis_type": "personal",
+    "title": "销售报告分析",
+    "file_urls": ["https://example.com/report.pdf"],
+    "file_names": ["Q4销售报告.pdf"]
+  }'
+
+# 多个文件分析
+curl -X POST http://localhost:8000/ai/analyze/new/ \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "analysis_type": "company",
+    "file_urls": [
+      "https://cdn1.com/f1.pdf",
+      "https://cdn2.com/f2.jpg"
+    ],
+    "file_names": [
+      "财务报表.pdf",
+      "业绩对比.jpg"
+    ]
+  }'
 ```
 
 ### 返回数据类型
@@ -735,13 +796,13 @@ curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/start/ \
 #### 流式 SSE 响应
 ```
 event: start
-data: {"session_id":"550e8400-xxx","status":"started","analysis_type":"personal","file_count":3}
+data: {"conversation_id":"550e8400-xxx","status":"started","analysis_type":"personal","file_count":2}
 
 event: progress
 data: {"stage":"first_token","elapsed_ms":1234}
 
 event: message
-data: {"message":"根据您上传的3个文件，我进行了以下分析..."}
+data: {"message":"根据您提供的2个文件，我进行了以下分析..."}
 
 event: message
 data: {"message":"### 数据总结\n\n1. ..."}
@@ -756,10 +817,10 @@ data: {"status":"completed","quota_cost":1}
   "messages": [
     {
       "role": "user",
-      "content": "[已上传3个文件，开始分析]",
+      "content": "[开始分析]",
       "files": [
         {
-          "path": "~/path/to/file1.pdf",
+          "url": "https://example.com/file1.pdf",
           "original_name": "年度报告2025.pdf"
         },
         {
@@ -806,24 +867,34 @@ data: {"status":"completed","quota_cost":1}
 |------|------|------|------|
 | session_id | string | 是 | 会话ID（URL路径参数） |
 | prompt | string | 是 | 追问内容 |
-| files | file | 否 | 新增文件（可选） |
+| file_urls | string | 否 | 文件的公网URL（可选） |
+| file_names | string | 否 | 对应的文件原名（可选） |
+
+**支持的文件格式**: PDF、图片格式（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）
 
 **注意事项**：
 - 每次调用都会扣除配额
-- 可以在追问时上传新文件，新文件会关联到当前用户消息
+- 可以在追问时传入新文件URL，新文件会关联到当前用户消息
 
 ### 请求示例
 ```bash
 # 纯文本追问
 curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/continue/ \
   -H "Authorization: Bearer <token>" \
-  -F "prompt=请针对第二部分的数据再做深入分析"
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "请针对第二部分的数据再做深入分析"
+  }'
 
-# 追问并上传新文件
+# 追问并附加新文件URL
 curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/continue/ \
   -H "Authorization: Bearer <token>" \
-  -F "prompt=请将这个新数据与之前的对比分析" \
-  -F "files=@/path/to/new_file.csv"
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "请将这个新数据与之前的对比分析",
+    "file_urls": ["https://example.com/new_data.pdf"],
+    "file_names": ["新数据文件.pdf"]
+  }'
 ```
 
 ### 返回数据类型
@@ -847,7 +918,7 @@ data: {"status":"completed","quota_cost":1}
 
 | 错误码 | 说明 |
 |-------|------|
-| 400 | prompt不能为空 |
+| 400 | prompt不能为空或URL格式错误 |
 | 401 | 未登陆 |
 | 402 | 配额不足 |
 | 404 | 会话不存在或无权访问 |
@@ -1315,20 +1386,14 @@ async function sendMessageWithFiles(conversationId, prompt, files) {
 
 ## 常见错误处理
 
-| 错误 | 原因 | 解决方案 |
-|------|------|--------|
-| 401 未登陆 | token无效或过期 | 重新调用登陆接口获取有效token |
-| 404 会话不存在 | 会话ID错误或已删除 | 检查会话ID或创建新会话 |
-| 400 文件不支持 | 上传的文件格式不支持 | 上传支持的文件格式 |
-| 500 服务器错误 | 服务器内部错误 | 稍后重试或联系技术支持 |
-
 ---
 
 ## 版本历史
 
 | 版本 | 日期 | 更新说明 |
 |------|------|--------|
-| 1.3 | 2026-01-22 | **重要更新**：拆分分析接口为三步流程，支持灵活的文件管理。新增 `/analyze/session/create/` 创建会话、`/analyze/session/<session_id>/upload/` 上传文件（可多次调用）、`/analyze/session/<session_id>/start/` 开始分析。初始分析使用固定文本 "[已上传N个文件，开始分析]" 替代内置提示词；新增 SSE `progress` 事件，返回首字节延迟（毫秒），便于前端显示进度。旧接口 `/analyze/new/` 仍然保留用于兼容 |
-| 1.2 | 2026-01-22 | **重要更新**：优化文件关联机制，文件对象现在包含 `path` 和 `original_name` 两个字段，前端可以显示原始文件名。新格式为 `{path: "...", original_name: "..."}`，支持向后兼容旧的字符串路径格式 |
-| 1.1 | 2026-01-22 | 优化附件关联机制，文件现在关联到具体的用户消息中（`messages[].files`），方便前端准确展示。保留会话级别的 `files` 数组用于向后兼容 |
-| 1.0 | 2026-01-17 | 初始版本，包含17个AI相关接口 |
+| 1.4 | 2026-01-24 | **重要变更**：升级为仅支持公网URL方式，移除本地文件上传。所有接口现采用 `file_urls` 和 `file_names` 两个参数，文件不下载和保存。严格限制为仅支持 PDF 和图片文件（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）。新增快速分析接口 `/ai/analyze/new/`（推荐使用），会话管理接口 `/ai/analyze/session/` 系列仍可用。所有URL必须公开可访问 |
+| 1.3 | 2026-01-22 | 拆分分析接口为三步流程，支持灵活的文件管理。新增 `/analyze/session/create/`、`/analyze/session/<session_id>/upload/`、`/analyze/session/<session_id>/start/` 接口 |
+| 1.2 | 2026-01-22 | 优化文件关联机制，文件对象包含 `path` 和 `original_name` 两个字段 |
+| 1.1 | 2026-01-22 | 文件关联到具体的用户消息中（`messages[].files`） |
+| 1.0 | 2026-01-17 | 初始版本 |

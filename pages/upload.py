@@ -4,10 +4,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import os
 import uuid
+import time
 from datetime import datetime
 from flask import Blueprint, request, jsonify
 from settings import UPLOAD_FILE_DIR
 from utils.login import login_required
+from utils.ai.pdfmaker import submit_convert, query_task, OFFICE_EXTS
 
 upload_page = Blueprint('upload', __name__)
 
@@ -65,6 +67,7 @@ def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None
         - base_dir: 基础目录
         - category: 分类
         - subcategory: 二级分类（可选）
+        - subsubcategory: 三级分类（可选）
         - use_filename: 指定的文件名（不包括扩展名），扩展名将使用原始文件的扩展名。如果不提供则自动生成 UUID
     
     返回:
@@ -100,8 +103,69 @@ def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None
     os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
     
     try:
-        # 保存文件
-        file.save(absolute_path)
+        # 如果是AI聊天且文件是Office格式，自动转换为PDF
+        temp_file_path = absolute_path
+        is_converted = False
+        
+        if category == "ai-chat" and f".{ext}" in OFFICE_EXTS:
+            # 先保存原始文件到临时位置
+            temp_file_path = absolute_path
+            file.save(temp_file_path)
+            
+            # 提交转换任务
+            task_id = submit_convert(temp_file_path, timeout_sec=300)
+            
+            # 等待转换完成（最多等待300秒）
+            start_time = time.time()
+            max_wait = 300
+            pdf_path = None
+            
+            while time.time() - start_time < max_wait:
+                task_result = query_task(task_id)
+                if task_result["ok"]:
+                    if task_result["status"] == "DONE":
+                        pdf_path = task_result["pdf"]
+                        is_converted = True
+                        break
+                    elif task_result["status"] == "FAILED":
+                        raise RuntimeError(f"PDF转换失败: {task_result.get('error', '未知错误')}")
+                
+                time.sleep(0.5)  # 每500ms检查一次
+            
+            if not is_converted:
+                raise RuntimeError("PDF转换超时")
+            
+            # 删除原始文件
+            try:
+                os.remove(temp_file_path)
+            except:
+                pass
+            
+            # 使用PDF文件替代原始文件
+            # 修改扩展名为pdf，重新构建路径
+            ext = "pdf"
+            if use_filename:
+                unique_filename = f"{use_filename}.pdf"
+            else:
+                unique_filename = f"{uuid.uuid4().hex}.pdf"
+            
+            if subcategory and subsubcategory:
+                relative_path = os.path.join(category, subcategory, subsubcategory, unique_filename)
+            elif subcategory:
+                relative_path = os.path.join(category, subcategory, unique_filename)
+            else:
+                relative_path = os.path.join(category, unique_filename)
+            
+            absolute_path = os.path.join(base_dir, relative_path)
+            os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
+            
+            # 移动转换后的PDF到目标位置
+            import shutil
+            shutil.move(pdf_path, absolute_path)
+            file_type = "document"
+        else:
+            # 保存文件
+            file.save(absolute_path)
         
         # 获取文件大小
         file_size = os.path.getsize(absolute_path)
@@ -111,11 +175,12 @@ def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None
         public_url = f"https://static.zhongrongxinfu.cn/{url_path}"
         
         return True, {
-            "filename": original_filename,
+            "filename": original_filename if not is_converted else original_filename.rsplit('.', 1)[0] + '.pdf',
             "url": public_url,
             "path": f"/{url_path}",
             "size": file_size,
             "type": file_type,
+            "converted": is_converted,
             "uploaded_at": datetime.now().isoformat()
         }
         
@@ -138,20 +203,25 @@ def upload_file():
     
     参数:
         - file: 要上传的文件（通过 multipart/form-data）
-        - category: 文件分类（可选），如 'avatar', 'product', 'document' 等，用于组织存储目录
+        - category: 文件分类（可选），如 'avatar', 'product', 'document', 'ai-chat' 等，用于组织存储目录
         - subcategory: 二级分类（可选），用于在 category 下创建子目录
         - filename: 自定义文件名（可选），不包含扩展名，扩展名使用原始文件的扩展名
+    
+    特殊处理:
+        当 category=ai-chat 时，如果上传的是 Word/Excel/PowerPoint 文件，将自动转换为 PDF 后保存
+        支持的Office格式: .doc, .docx, .xls, .xlsx, .ppt, .pptx
     
     返回:
         {
             "code": 200,
             "message": "上传成功",
             "data": {
-                "filename": "原始文件名",
+                "filename": "原始文件名或转换后的PDF名",
                 "url": "https://static.zhongrongxinfu.cn/uploads/xxxx.jpg",
                 "path": "/uploads/xxxx.jpg",
                 "size": 12345,
                 "type": "image",
+                "converted": false,
                 "uploaded_at": "2026-01-19T10:30:00"
             }
         }
@@ -174,6 +244,13 @@ def upload_file():
             category=product
             subcategory=electronics
             filename=item-001
+        
+        4. 上传到AI聊天（自动转换Office文件为PDF）:
+            POST /upload/
+            file=<Word/Excel/PPT文件>
+            category=ai-chat
+            filename=my-document
+            # 文件将自动转换为PDF后保存，返回的filename会是 my-document.pdf
     """
     # 获取上传的文件
     if 'file' not in request.files:
@@ -211,10 +288,14 @@ def upload_files_batch():
         - filenames: JSON 数组或对象，对应每个文件的自定义文件名（可选）
           格式: ["file1", "file2", "file3"] 或 "{\"0\": \"file1\", \"1\": \"file2\"}"
     
+    特殊处理:
+        当 category=ai-chat 时，如果上传的是 Word/Excel/PowerPoint 文件，将自动转换为 PDF 后保存
+        支持的Office格式: .doc, .docx, .xls, .xlsx, .ppt, .pptx
+    
     返回:
         {
             "code": 200,
-            "message": "批量上传完成",
+            "message": "批量上传完成，成功 X 个，失败 Y 个",
             "data": {
                 "success": [...],
                 "failed": [...]
@@ -231,7 +312,7 @@ def upload_files_batch():
             POST /upload/batch/
             files=<多个文件>
             category=product
-            filenames=["product1", "product2", "product3"]
+            filenames=["file1", "file2", "file3"]
         
         3. 使用二级目录:
             POST /upload/batch/
@@ -239,6 +320,13 @@ def upload_files_batch():
             category=product
             subcategory=electronics
             filenames=["item1", "item2", "item3"]
+        
+        4. 批量上传到AI聊天（自动转换Office文件为PDF）:
+            POST /upload/batch/
+            files=<多个Word/Excel/PPT文件>
+            category=ai-chat
+            filenames=["document1", "document2"]
+            # 文件将自动转换为PDF后保存
     """
     if 'files' not in request.files:
         return jsonify({"code": 400, "message": "请选择要上传的文件"}), 400
