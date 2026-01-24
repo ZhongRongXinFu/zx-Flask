@@ -22,8 +22,6 @@ POST /ai/chat/new/
 ```
 POST /ai/analyze/new/ 
 → 获取 conversation_id
-→ POST /ai/analyze/session/<conversation_id>/upload/ 
-→ 上传文件
 → POST /ai/analyze/session/<conversation_id>/continue/ 
 → 开始分析或继续追问
 ```
@@ -577,7 +575,7 @@ curl -X DELETE http://localhost:8000/ai/chat/delete/conv-550e8400-e29b-41d4-a716
 分析接口支持快速分析模式（一步完成），以及会话管理模式（灵活追加文件）：
 
 **快速分析** (`/ai/analyze/new/`)：直接传入文件URL，一步完成分析
-**会话管理** (`/ai/analyze/session/`系列)：创建会话 → 上传文件 → 继续分析
+**会话管理** (`/ai/analyze/session/`系列)：创建会话 → 继续分析（可在 `continue` 中携带文件URL）
 
 ### 8. 创建分析会话
 
@@ -643,94 +641,13 @@ curl -X POST http://localhost:8000/ai/analyze/session/create/ \
 
 ---
 
-### 9. 上传分析文件
+### 9. 上传分析文件（已移除）
 
-### 接口信息
-- **方法**: `POST`
-- **路由**: `/ai/analyze/session/<session_id>/upload/`
-- **认证**: 是
-- **描述**: 上传文件到分析会话（第二步，可多次调用）
+此接口已废弃并移除。请在调用 `/ai/analyze/session/<session_id>/continue/` 时直接通过 Body 传入 `file_urls` 与 `file_names` 即可完成文件引用，无需单独上传步骤。
 
-### 请求参数
+变更原因：全部采用公网 URL 引用文件，统一由 `continue` 接口处理。
 
-| 参数 | 类型 | 必须 | 说明 |
-|------|------|------|------|
-| session_id | string | 是 | 会话ID（URL路径参数） |
-| file_urls | string | 是 | 文件的公网URL（可多个） |
-| file_names | string | 是 | 对应的文件原名（必须与file_urls一一对应） |
-
-**支持的文件格式**: PDF、图片格式（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）
-
-### 请求示例
-```bash
-# 单个文件
-curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "file_urls": ["https://example.com/report.pdf"],
-    "file_names": ["年度报告2025.pdf"]
-  }'
-
-# 多个文件
-curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "file_urls": [
-      "https://cdn1.com/file1.pdf",
-      "https://cdn2.com/file2.jpg"
-    ],
-    "file_names": [
-      "年度报告2025.pdf",
-      "销售图表.jpg"
-    ]
-  }'
-
-# 多次上传（灵活追加文件）
-curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "file_urls": ["https://example.com/additional.pdf"],
-    "file_names": ["补充文档.pdf"]
-  }'
-```
-
-### 返回数据类型
-
-#### 成功（200）
-```json
-{
-  "code": 0,
-  "message": "文件已上传",
-  "data": {
-    "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "uploaded_count": 2,
-    "total_count": 2,
-    "uploaded_files": [
-      {
-        "url": "https://example.com/file1.pdf",
-        "type": "file_url",
-        "original_name": "年度报告2025.pdf"
-      },
-      {
-        "url": "https://example.com/file2.jpg",
-        "type": "image_url",
-        "original_name": "销售图表.jpg"
-      }
-    ]
-  }
-}
-```
-
-#### 错误响应
-
-| 错误码 | 说明 |
-|-------|------|
-| 400 | URL格式错误、文件名不匹配或文件类型不支持 |
-| 401 | 未登陆 |
-| 404 | 会话不存在或无权访问 |
+示例请参考下方“继续分析（追问）”章节。
 
 ---
 
@@ -1338,6 +1255,7 @@ async function sendMessageWithUrls(conversationId, prompt, fileUrls = [], fileNa
 
 | 版本 | 日期 | 更新说明 |
 |------|------|--------|
+| 1.7 | 2026-01-24 | **接口调整**：移除 `/ai/analyze/session/<session_id>/upload/` 接口，统一在 `continue` 接口中通过 `file_urls`/`file_names` 引用文件（公网 URL）。|
 | 1.6 | 2026-01-24 | **接口清理**：移除向后兼容的废弃接口 `/ai/chat/new/old/` 和 `/ai/analyze/new/old/`。所有新接口都采用创建会话与处理内容分离的设计 |
 | 1.5 | 2026-01-24 | **接口优化**：简化 `/ai/chat/new/` 和 `/ai/analyze/new/` 接口，仅负责创建会话并返回会话ID。发送消息和上传文件改为独立调用对应接口。提高API使用的灵活性和一致性 |
 | 1.4 | 2026-01-24 | **重要变更**：升级为仅支持公网URL方式，移除本地文件上传。所有接口现采用 `file_urls` 和 `file_names` 两个参数，文件不下载和保存。严格限制为仅支持 PDF 和图片文件（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）。新增快速分析接口 `/ai/analyze/new/`（推荐使用），会话管理接口 `/ai/analyze/session/` 系列仍可用。所有URL必须公开可访问 |
