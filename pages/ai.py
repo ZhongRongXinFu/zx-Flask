@@ -643,7 +643,7 @@ def get_conversation_detail(conversation_id):
     })
 
 
-@ai_page.route("/delete/<conversation_id>/", methods=["DELETE"])
+@ai_page.route("/conversation/delete/<conversation_id>/", methods=["DELETE"])
 @login_required
 def delete_conversation_endpoint(conversation_id):
     """删除对话"""
