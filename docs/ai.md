@@ -17,13 +17,13 @@ POST /ai/chat/new/
 → POST /ai/chat/continue/<conversation_id>/ 
 → 发送消息（支持文件）
 ```
-
+**描述**: 创建分析会话，仅创建会话并返回会话ID。开始分析与后续追问统一使用 `/ai/analyze/session/<session_id>/continue/`（可在 Body 携带 `file_urls`/`file_names`）
 **创建分析会话**：
 ```
 POST /ai/analyze/new/ 
 → 获取 conversation_id
 → POST /ai/analyze/session/<conversation_id>/continue/ 
-→ 开始分析或继续追问
+→ 继续分析或追问（支持携带文件URL）
 ```
 
 **关键改进**：
@@ -1255,6 +1255,7 @@ async function sendMessageWithUrls(conversationId, prompt, fileUrls = [], fileNa
 
 | 版本 | 日期 | 更新说明 |
 |------|------|--------|
+| 1.8 | 2026-01-24 | **接口调整**：移除 `/ai/analyze/session/<session_id>/start/` 接口，首次分析与后续追问统一使用 `continue`（支持在 Body 传入 `file_urls`/`file_names`）。|
 | 1.7 | 2026-01-24 | **接口调整**：移除 `/ai/analyze/session/<session_id>/upload/` 接口，统一在 `continue` 接口中通过 `file_urls`/`file_names` 引用文件（公网 URL）。|
 | 1.6 | 2026-01-24 | **接口清理**：移除向后兼容的废弃接口 `/ai/chat/new/old/` 和 `/ai/analyze/new/old/`。所有新接口都采用创建会话与处理内容分离的设计 |
 | 1.5 | 2026-01-24 | **接口优化**：简化 `/ai/chat/new/` 和 `/ai/analyze/new/` 接口，仅负责创建会话并返回会话ID。发送消息和上传文件改为独立调用对应接口。提高API使用的灵活性和一致性 |
