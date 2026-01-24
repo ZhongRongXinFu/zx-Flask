@@ -4,6 +4,36 @@
 
 ## 重要变更说明 (2026-01-24)
 
+### 📌 接口流程优化 - 创建会话与处理内容分离
+
+系统已优化接口设计，使得创建会话和处理内容的过程分离，提高了API的灵活性和易用性：
+
+**新流程**：
+
+**创建聊天会话**：
+```
+POST /ai/chat/new/ 
+→ 获取 conversation_id
+→ POST /ai/chat/continue/<conversation_id>/ 
+→ 发送消息（支持文件）
+```
+
+**创建分析会话**：
+```
+POST /ai/analyze/new/ 
+→ 获取 conversation_id
+→ POST /ai/analyze/session/<conversation_id>/upload/ 
+→ 上传文件
+→ POST /ai/analyze/session/<conversation_id>/continue/ 
+→ 开始分析或继续追问
+```
+
+**关键改进**：
+- ✅ 创建会话和发送内容流程清晰
+- ✅ 更好的错误处理和步骤控制
+- ✅ 支持在创建后再决定是否上传文件
+- ✅ 提高了API的可扩展性
+
 ### 📌 仅支持公网URL - 文件需传入原名
 
 系统现已升级为**仅支持公网URL**的方式传入文件，用户需要同时传入文件的URL和对应的文件原名：
@@ -33,6 +63,11 @@
 - ✅ 支持CDN和云存储链接
 - ✅ 文件类型严格限制（仅PDF和图片）
 - ⚠️ URL必须公开可访问（不支持认证链接）
+
+### 📌 DeepSeek 仅接受纯文本
+
+- DeepSeek 不支持 `image_url` / `file_url` 多模态输入，所有附件会被后端转换为纯文本引用（示例：`[图片] https://...`、`[文件] https://...`）。
+- 如需真正的多模态（图片/PDF）理解，请使用 `doubao` 模型。
 
 ## 环境配置
 
@@ -143,7 +178,8 @@ curl -X GET http://localhost:8000/ai/conversation/conv-550e8400-e29b-41d4-a716-4
         "content": "你好，请帮我分析一下这个文件",
         "files": [
           {
-            "path": "~/Desktop/zhongxin/flask/static/chat-uploads/conv-xxx/abc123.pdf",
+            "type": "file_url",
+            "url": "https://cdn.example.com/report.pdf",
             "original_name": "年度报告2025.pdf"
           }
         ]
@@ -157,8 +193,9 @@ curl -X GET http://localhost:8000/ai/conversation/conv-550e8400-e29b-41d4-a716-4
         "content": "请继续分析这个表格",
         "files": [
           {
-            "path": "~/Desktop/zhongxin/flask/static/chat-uploads/conv-xxx/def456.xlsx",
-            "original_name": "销售数据2025.xlsx"
+            "type": "image_url",
+            "url": "https://cdn.example.com/chart.jpg",
+            "original_name": "销售数据图.jpg"
           }
         ]
       },
@@ -169,12 +206,14 @@ curl -X GET http://localhost:8000/ai/conversation/conv-550e8400-e29b-41d4-a716-4
     ],
     "files": [
       {
-        "path": "~/Desktop/zhongxin/flask/static/chat-uploads/conv-xxx/abc123.pdf",
+        "type": "file_url",
+        "url": "https://cdn.example.com/report.pdf",
         "original_name": "年度报告2025.pdf"
       },
       {
-        "path": "~/Desktop/zhongxin/flask/static/chat-uploads/conv-xxx/def456.xlsx",
-        "original_name": "销售数据2025.xlsx"
+        "type": "image_url",
+        "url": "https://cdn.example.com/chart.jpg",
+        "original_name": "销售数据图.jpg"
       }
     ],
     "created_at": "2026-01-17T10:00:00Z",
@@ -185,9 +224,10 @@ curl -X GET http://localhost:8000/ai/conversation/conv-550e8400-e29b-41d4-a716-4
 
 **字段说明**：
 - `messages[].files`: （新增）该条用户消息关联的文件对象数组
-  - `path`: 文件的完整存储路径
-  - `original_name`: 用户上传时的原始文件名
-- `files`: 会话级别的所有文件列表（向后兼容）
+  - `type`: `file_url`（PDF/文档类）或 `image_url`（图片）
+  - `url`: 文件公网地址（必须 http:// 或 https://）
+  - `original_name`: 用户提供的原始文件名
+- `files`: 会话级别的所有文件列表（与消息结构一致）
 
 **前端展示建议**：
 ```javascript
@@ -308,7 +348,7 @@ curl -X DELETE http://localhost:8000/ai/conversation/deleteall/ \
 - **方法**: `POST`
 - **路由**: `/ai/chat/new/`
 - **认证**: 是
-- **描述**: 创建新的AI对话，可选择模型并发送初始消息
+- **描述**: 创建新的AI对话会话，仅创建会话并返回会话ID。发送初始消息请使用 `/ai/chat/continue/<conversation_id>/` 接口
 
 ### 请求参数
 
@@ -316,15 +356,10 @@ curl -X DELETE http://localhost:8000/ai/conversation/deleteall/ \
 |------|------|------|------|
 | model | string | 否 | AI模型，可选值: `deepseek`、`doubao`，默认 `deepseek` |
 | title | string | 否 | 会话标题，默认 "新对话" |
-| prompt | string | 否 | 初始消息内容 |
-| file_urls | string | 否 | 文件的公网URL（可多个） |
-| file_names | string | 否 | 对应的文件原名（必须与file_urls一一对应） |
-
-**支持的文件格式**: PDF、图片格式（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）
 
 ### 请求示例
 ```bash
-# 创建空对话
+# 创建新对话
 curl -X POST http://localhost:8000/ai/chat/new/ \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
@@ -333,39 +368,16 @@ curl -X POST http://localhost:8000/ai/chat/new/ \
     "title": "数据分析"
   }'
 
-# 创建对话并发送初始消息（带URL文件，流式响应）
+# 创建对话（使用默认模型和标题）
 curl -X POST http://localhost:8000/ai/chat/new/ \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek",
-    "title": "PDF分析",
-    "prompt": "请帮我分析这个PDF文件",
-    "file_urls": ["https://example.com/report.pdf"],
-    "file_names": ["销售报告2026.pdf"]
-  }'
-
-# 多个文件示例
-curl -X POST http://localhost:8000/ai/chat/new/ \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek",
-    "prompt": "请对比分析这两个文件",
-    "file_urls": [
-      "https://cdn1.com/v1.pdf",
-      "https://cdn2.com/v2.jpg"
-    ],
-    "file_names": [
-      "版本1.pdf",
-      "图表对比.jpg"
-    ]
-  }'
+  -d '{}'
 ```
 
 ### 返回数据类型
 
-#### 创建空对话成功（200）
+#### 成功（200）
 ```json
 {
   "code": 0,
@@ -378,55 +390,15 @@ curl -X POST http://localhost:8000/ai/chat/new/ \
 }
 ```
 
-#### 发送初始消息（流式 SSE 响应）
-```
-event: start
-data: {"conversation_id":"conv-xxx","status":"started"}
-
-event: message
-data: {"message":"这是第一部分响应..."}
-
-event: message
-data: {"message":"这是第二部分响应..."}
-
-event: end
-data: {"status":"completed"}
-```
-
-**响应后数据结构**：
-发送初始消息后，会话的消息数据结构会自动包含文件关联信息：
-```json
-{
-  "messages": [
-    {
-      "role": "user",
-      "content": "请帮我分析这个PDF文件",
-      "files": [
-        {
-          "path": "/path/to/file.pdf",
-          "original_name": "报告2025.pdf"
-        }
-      ]
-    },
-    {
-      "role": "assistant",
-      "content": "这是AI的完整响应..."
-    }
-  ],
-  "files": [
-    {
-      "path": "/path/to/file.pdf",
-      "original_name": "报告2025.pdf"
-    }
-  ]
-}
-```
+**说明**：
+- `conversation_id`: 新创建的会话ID，用于后续对话操作
+- 使用返回的 `conversation_id` 调用 `/ai/chat/continue/<conversation_id>/` 接口发送消息
 
 #### 错误响应
 
 | 错误码 | 说明 |
 |-------|------|
-| 400 | 不支持的模型或文件上传失败 |
+| 400 | 不支持的模型 |
 | 401 | 未登陆 |
 
 ---
@@ -449,6 +421,10 @@ data: {"status":"completed"}
 | file_names | string | 否 | 对应的文件原名（必须与file_urls一一对应） |
 
 **支持的文件格式**: PDF、图片格式（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）
+
+**模型差异**：
+- `deepseek`: 不接受多模态。附件会被转成纯文本行：`[图片] <url>` / `[文件] <url>` 与 `prompt` 合并后发给模型。
+- `doubao`: 支持 `image_url` / `file_url` 多模态输入，保持原样传递。
 
 ### 请求示例
 ```bash
@@ -473,6 +449,23 @@ curl -X POST http://localhost:8000/ai/chat/continue/conv-550e8400-e29b-41d4-a716
     "file_names": [
       "文件A.pdf",
       "对比图表.jpg"
+    ]
+  }'
+
+# DeepSeek 下的等价请求（附件会自动转成纯文本描述，不会发送 image_url/file_url 给模型）
+curl -X POST http://localhost:8000/ai/chat/continue/conv-550e8400-e29b-41d4-a716-446655440000/ \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek",
+    "prompt": "请基于这些文件给出摘要",
+    "file_urls": [
+      "https://example.com/report.pdf",
+      "https://example.com/figure.png"
+    ],
+    "file_names": [
+      "年度报告.pdf",
+      "图例.png"
     ]
   }'
 ```
@@ -505,12 +498,14 @@ data: {"status":"completed"}
       "content": "请对这两个文件进行对比分析",
       "files": [
         {
-          "path": "/path/to/file1.pdf",
+          "type": "file_url",
+          "url": "https://example.com/file1.pdf",
           "original_name": "文件A.pdf"
         },
         {
-          "path": "/path/to/file2.pdf",
-          "original_name": "文件B.pdf"
+          "type": "image_url",
+          "url": "https://example.com/file2.jpg",
+          "original_name": "文件B.jpg"
         }
       ]  // 本次上传的文件
     },
@@ -525,7 +520,8 @@ data: {"status":"completed"}
 **注意事项**：
 - 如果某条用户消息没有上传文件，则不会有 `files` 字段
 - AI 助手的消息（`role: "assistant"`）永远不会有 `files` 字段
-- 每个文件对象包含 `path`（存储路径）和 `original_name`（原始文件名）两个字段
+- 每个文件对象包含 `type`、`url`、`original_name` 三个字段（不再返回本地路径）
+- DeepSeek 场景下，模型收到的内容为纯文本（附件会被转成 `[文件]/[图片] + URL` 描述），但返回的消息结构仍会包含 `files` 数组便于前端展示
 
 #### 错误响应
 
@@ -738,13 +734,13 @@ curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
 
 ---
 
-### 10. 开始初次分析
+### 10. 创建新分析会话
 
 ### 接口信息
 - **方法**: `POST`
 - **路由**: `/ai/analyze/new/`
 - **认证**: 是
-- **描述**: 创建分析会话并开始分析（一步完成，包含文件和初始分析）
+- **描述**: 创建分析会话，仅创建会话并返回会话ID。上传文件和开始分析请分别使用对应的接口
 
 ### 请求参数
 
@@ -752,104 +748,62 @@ curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/upload/ \
 |------|------|------|------|
 | analysis_type | string | 否 | 分析类型：`personal`或`company`，默认 `personal` |
 | title | string | 否 | 会话标题，默认 "新分析" |
-| file_urls | string | 是 | 文件的公网URL（可多个） |
-| file_names | string | 是 | 对应的文件原名（必须与file_urls一一对应） |
-
-**支持的文件格式**: PDF、图片格式（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）
-
-**配额消耗**:
-- `personal`: 消耗1配额
-- `company`: 消耗2配额
 
 ### 请求示例
 ```bash
-# 单个文件分析
+# 创建个人分析会话
 curl -X POST http://localhost:8000/ai/analyze/new/ \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
     "analysis_type": "personal",
-    "title": "销售报告分析",
-    "file_urls": ["https://example.com/report.pdf"],
-    "file_names": ["Q4销售报告.pdf"]
+    "title": "销售报告分析"
   }'
 
-# 多个文件分析
+# 创建企业分析会话
 curl -X POST http://localhost:8000/ai/analyze/new/ \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
     "analysis_type": "company",
-    "file_urls": [
-      "https://cdn1.com/f1.pdf",
-      "https://cdn2.com/f2.jpg"
-    ],
-    "file_names": [
-      "财务报表.pdf",
-      "业绩对比.jpg"
-    ]
+    "title": "财务分析"
   }'
+
+# 使用默认参数
+curl -X POST http://localhost:8000/ai/analyze/new/ \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
 ### 返回数据类型
 
-#### 流式 SSE 响应
-```
-event: start
-data: {"conversation_id":"550e8400-xxx","status":"started","analysis_type":"personal","file_count":2}
-
-event: progress
-data: {"stage":"first_token","elapsed_ms":1234}
-
-event: message
-data: {"message":"根据您提供的2个文件，我进行了以下分析..."}
-
-event: message
-data: {"message":"### 数据总结\n\n1. ..."}
-
-event: end
-data: {"status":"completed","quota_cost":1}
-```
-
-**响应后数据结构**：
+#### 成功（200）
 ```json
 {
-  "messages": [
-    {
-      "role": "user",
-      "content": "[开始分析]",
-      "files": [
-        {
-          "url": "https://example.com/file1.pdf",
-          "original_name": "年度报告2025.pdf"
-        },
-        {
-          "path": "~/path/to/file2.xlsx",
-          "original_name": "销售数据.xlsx"
-        }
-      ]
-    },
-    {
-      "role": "assistant",
-      "content": "根据您上传的文件，我进行了以下分析..."
-    }
-  ]
+  "code": 0,
+  "data": {
+    "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
+    "user_id": "user-uuid",
+    "model": "doubao",
+    "analysis_type": "personal",
+    "title": "销售报告分析"
+  }
 }
 ```
 
-**特殊说明**：
-- 用户消息使用固定文本 `[已上传N个文件，开始分析]`，而不是保存内置系统提示词
-- 所有初始上传的文件都只关联到这条用户消息的 `files` 字段
-- 后续每条消息只关联本次新上传的文件（如有），不会重复包含历史消息的文件，便于前端精确展示每条消息的附件
+**说明**：
+- `conversation_id`: 新创建的分析会话ID
+- `model`: 分析使用的模型，固定为 `doubao`
+- `analysis_type`: 分析类型（personal 或 company）
+- 使用返回的 `conversation_id` 调用后续接口上传文件和进行分析
 
 #### 错误响应
 
 | 错误码 | 说明 |
 |-------|------|
-| 400 | 会话中没有文件，或该会话已经开始过分析 |
+| 400 | 不支持的分析类型 |
 | 401 | 未登陆 |
-| 402 | 配额不足 |
-| 404 | 会话不存在或无权访问 |
 
 ---
 
@@ -1288,23 +1242,23 @@ function renderMessage(message) {
       const attachmentItem = document.createElement('div');
       attachmentItem.className = 'attachment-item';
       
-      // 支持新的对象格式和旧的字符串格式
-      let fileName, filePath;
+      // 支持新的对象格式（推荐）和旧的字符串格式
+      let fileName, fileUrl;
       if (typeof file === 'object') {
-        // 新格式：{path: "...", original_name: "..."}
+        // 新格式：{type: "file_url" | "image_url", url: "...", original_name: "..."}
         fileName = file.original_name;
-        filePath = file.path;
+        fileUrl = file.url;
       } else {
-        // 旧格式：直接是路径字符串
+        // 旧格式：直接是路径/URL 字符串
         fileName = file.split('/').pop();
-        filePath = file;
+        fileUrl = file;
       }
       
       attachmentItem.innerHTML = `
         <span class="attachment-icon">📎</span>
         <span class="attachment-name">${fileName}</span>
       `;
-      attachmentItem.dataset.filePath = filePath;  // 保存路径供下载/预览使用
+      attachmentItem.dataset.fileUrl = fileUrl;  // 保存URL供下载/预览使用
       attachmentsDiv.appendChild(attachmentItem);
     });
     
@@ -1315,22 +1269,21 @@ function renderMessage(message) {
   document.getElementById('chat-container').appendChild(messageDiv);
 }
 
-// 发送带附件的消息示例
-async function sendMessageWithFiles(conversationId, prompt, files) {
-  const formData = new FormData();
-  formData.append('prompt', prompt);
-  
-  // 只会把本次新上传的文件作为当前消息的附件
-  files.forEach(file => {
-    formData.append('files', file);
-  });
-  
+// 发送带公网 URL 的消息示例（支持 deepseek/doubao）
+async function sendMessageWithUrls(conversationId, prompt, fileUrls = [], fileNames = []) {
+  const payload = {
+    prompt,
+    file_urls: fileUrls,
+    file_names: fileNames
+  };
+
   const response = await fetch(`/ai/chat/continue/${conversationId}/`, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${token}`
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
     },
-    body: formData
+    body: JSON.stringify(payload)
   });
   
   // 处理流式响应...
@@ -1373,14 +1326,7 @@ async function sendMessageWithFiles(conversationId, prompt, files) {
 | 格式 | 说明 | 最大大小 |
 |------|------|--------|
 | PDF | 文档格式 | 50MB |
-| DOCX | Word文档 | 50MB |
-| DOC | Word 97-2003 | 50MB |
-| XLSX | Excel电子表格 | 50MB |
-| XLS | Excel 97-2003 | 50MB |
-| CSV | 逗号分隔值 | 50MB |
-| TXT | 纯文本 | 50MB |
-| MD | Markdown | 50MB |
-| JSON | JSON数据 | 50MB |
+| JPG/JPEG/PNG/GIF/BMP/WEBP | 图片格式 | 50MB |
 
 ---
 
@@ -1392,6 +1338,8 @@ async function sendMessageWithFiles(conversationId, prompt, files) {
 
 | 版本 | 日期 | 更新说明 |
 |------|------|--------|
+| 1.6 | 2026-01-24 | **接口清理**：移除向后兼容的废弃接口 `/ai/chat/new/old/` 和 `/ai/analyze/new/old/`。所有新接口都采用创建会话与处理内容分离的设计 |
+| 1.5 | 2026-01-24 | **接口优化**：简化 `/ai/chat/new/` 和 `/ai/analyze/new/` 接口，仅负责创建会话并返回会话ID。发送消息和上传文件改为独立调用对应接口。提高API使用的灵活性和一致性 |
 | 1.4 | 2026-01-24 | **重要变更**：升级为仅支持公网URL方式，移除本地文件上传。所有接口现采用 `file_urls` 和 `file_names` 两个参数，文件不下载和保存。严格限制为仅支持 PDF 和图片文件（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）。新增快速分析接口 `/ai/analyze/new/`（推荐使用），会话管理接口 `/ai/analyze/session/` 系列仍可用。所有URL必须公开可访问 |
 | 1.3 | 2026-01-22 | 拆分分析接口为三步流程，支持灵活的文件管理。新增 `/analyze/session/create/`、`/analyze/session/<session_id>/upload/`、`/analyze/session/<session_id>/start/` 接口 |
 | 1.2 | 2026-01-22 | 优化文件关联机制，文件对象包含 `path` 和 `original_name` 两个字段 |
