@@ -1358,43 +1358,6 @@ def deduct_analysis_quota(user_id: str, analysis_type: str) -> bool:
 
 
 # ========== 数据分析接口（新版拆分） ==========
-
-@ai_page.route("/analyze/session/create/", methods=["POST"])
-@login_required
-def create_analysis_session():
-    """创建分析会话（第一步：不上传文件）"""
-    user_id = g.current_user["uuid"]
-    data = request.get_json() if request.is_json else request.form
-    
-    analysis_type = data.get("analysis_type", "personal")
-    title = data.get("title", "新分析")
-    
-    # 验证参数
-    if analysis_type not in {"personal", "company"}:
-        return jsonify({"code": 400, "message": "不支持的分析类型，支持: personal, company"})
-    
-    # 创建会话（不检查配额，在开始分析时再检查）
-    model = "doubao"
-    conversation = create_conversation(user_id, model, title, analysis_type)
-    
-    return jsonify({
-        "code": 0,
-        "message": "分析会话已创建",
-        "data": {
-            "session_id": conversation["id"],
-            "user_id": user_id,
-            "analysis_type": analysis_type,
-            "title": title,
-            "model": model,
-            "created_at": conversation.get("created_at")
-        }
-    })
-
-
-
-# 已移除：/analyze/session/<session_id>/start/ 路由与实现（统一使用 continue 进行首次与后续分析）
-
-
 @ai_page.route("/analyze/new/", methods=["POST"])
 @login_required
 def new_analysis():
@@ -1411,23 +1374,24 @@ def new_analysis():
     
     # 创建对话（使用 analysis_type）
     conversation = create_conversation(user_id, model, title, analysis_type)
-    conversation_id = conversation["id"]
     
     return jsonify({
         "code": 0,
+        "message": "分析会话已创建",
         "data": {
-            "conversation_id": conversation_id,
+            "conversation_id": conversation.get("id"),
             "user_id": user_id,
             "model": model,
             "analysis_type": analysis_type,
-            "title": title
+            "title": title,
+            "created_at": conversation.get("created_at")
         }
     })
 
 
-@ai_page.route("/analyze/session/<session_id>/continue/", methods=["POST"])
+@ai_page.route("/analyze/<conversation_id>/continue/", methods=["POST"])
 @login_required
-def continue_analysis(session_id):
+def continue_analysis(conversation_id):
     """继续数据分析对话（支持追问和上传新文件）"""
     user_id = g.current_user["uuid"]
     data = request.get_json() or {}
@@ -1437,7 +1401,7 @@ def continue_analysis(session_id):
         return jsonify({"code": 400, "message": "提示词不能为空"})
     
     # 获取对话
-    conversation = get_conversation(session_id, user_id)
+    conversation = get_conversation(conversation_id, user_id)
     if not conversation:
         return jsonify({"code": 404, "message": "对话不存在"})
     
@@ -1475,7 +1439,7 @@ def continue_analysis(session_id):
             file_names = [file_names]
         
         # 验证并准备新文件
-        new_file_objects = validate_and_prepare_files(file_urls, file_names, session_id)
+        new_file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id)
         
         # 转换为数据库格式
         new_db_files = []
@@ -1537,15 +1501,15 @@ def continue_analysis(session_id):
                 messages_with_system = [{"role": "system", "content": system_prompt}] + messages
                 
                 # 流式输出响应
-                yield f"event: start\ndata: {json.dumps({'session_id': session_id, 'status': 'started'})}\n\n"
+                yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
                 
                 response_text = ""
                 start_time = time.time()
                 first_token_sent = False
-                print(f"\n[继续分析] 会话ID: {session_id}, 类型: {analysis_type}")
+                print(f"\n[继续分析] 会话ID: {conversation_id}, 类型: {analysis_type}")
                 
                 # 不通过 files 参数，因为文件已在 messages 中
-                for chunk in chat_func(messages=messages_with_system, user_id=user_id, conversation_id=session_id):
+                for chunk in chat_func(messages=messages_with_system, user_id=user_id, conversation_id=conversation_id):
                     chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
                     response_text += chunk_str
                     if not first_token_sent:
@@ -1558,7 +1522,7 @@ def continue_analysis(session_id):
                 
                 # 保存助手响应到数据库
                 messages.append({"role": "assistant", "content": response_text})
-                update_conversation(session_id, messages, conversation_files)
+                update_conversation(conversation_id, messages, conversation_files)
                 
                 yield f"event: end\ndata: {json.dumps({'status': 'completed', 'quota_cost': quota_cost})}\n\n"
             

@@ -17,12 +17,12 @@ POST /ai/chat/new/
 → POST /ai/chat/continue/<conversation_id>/ 
 → 发送消息（支持文件）
 ```
-**描述**: 创建分析会话，仅创建会话并返回会话ID。开始分析与后续追问统一使用 `/ai/analyze/session/<session_id>/continue/`（可在 Body 携带 `file_urls`/`file_names`）
+**描述**: 创建分析会话，仅创建会话并返回会话ID。开始分析与后续追问统一使用 `/ai/analyze/<conversation_id>/continue/`（可在 Body 携带 `file_urls`/`file_names`）
 **创建分析会话**：
 ```
 POST /ai/analyze/new/ 
 → 获取 conversation_id
-→ POST /ai/analyze/session/<conversation_id>/continue/ 
+→ POST /ai/analyze/<conversation_id>/continue/ 
 → 继续分析或追问（支持携带文件URL）
 ```
 
@@ -575,75 +575,17 @@ curl -X DELETE http://localhost:8000/ai/chat/delete/conv-550e8400-e29b-41d4-a716
 分析接口支持快速分析模式（一步完成），以及会话管理模式（灵活追加文件）：
 
 **快速分析** (`/ai/analyze/new/`)：直接传入文件URL，一步完成分析
-**会话管理** (`/ai/analyze/session/`系列)：创建会话 → 继续分析（可在 `continue` 中携带文件URL）
+**会话管理** (`/ai/analyze/<conversation_id>/continue/`)：通过 `/ai/analyze/new/` 创建会话后，使用 `continue` 追加文件与追问
 
-### 8. 创建分析会话
+### 8. 创建分析会话（已移除）
 
-### 接口信息
-- **方法**: `POST`
-- **路由**: `/ai/analyze/session/create/`
-- **认证**: 是
-- **描述**: 创建一个新的分析会话
-
-### 请求参数
-
-| 参数 | 类型 | 必须 | 说明 |
-|------|------|------|------|
-| analysis_type | string | 否 | 分析类型：`personal`(个人)或`company`(企业)，默认 `personal` |
-| title | string | 否 | 会话标题，默认 "新分析" |
-
-**分析类型说明**:
-- `personal`: 个人分析模式 - 消耗1配额
-- `company`: 企业分析模式 - 消耗2配额
-
-### 请求示例
-```bash
-# JSON格式
-curl -X POST http://localhost:8000/ai/analyze/session/create/ \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "analysis_type": "personal",
-    "title": "销售数据分析"
-  }'
-
-# 表单格式
-curl -X POST http://localhost:8000/ai/analyze/session/create/ \
-  -H "Authorization: Bearer <token>" \
-  -F "analysis_type=company" \
-  -F "title=Q4业务分析报告"
-```
-
-### 返回数据类型
-
-#### 成功（200）
-```json
-{
-  "code": 0,
-  "message": "分析会话已创建",
-  "data": {
-    "session_id": "550e8400-e29b-41d4-a716-446655440000",
-    "user_id": "user-uuid",
-    "analysis_type": "personal",
-    "title": "销售数据分析",
-    "model": "doubao",
-    "created_at": "2026-01-22T10:00:00Z"
-  }
-}
-```
-
-#### 错误响应
-
-| 错误码 | 说明 |
-|-------|------|
-| 400 | analysis_type参数错误（必须是personal或company） |
-| 401 | 未登陆 |
+该接口已下线。请使用 `/ai/analyze/new/` 创建分析会话，并通过 `/ai/analyze/<conversation_id>/continue/` 发送首条分析请求或追加文件。
 
 ---
 
 ### 9. 上传分析文件（已移除）
 
-此接口已废弃并移除。请在调用 `/ai/analyze/session/<session_id>/continue/` 时直接通过 Body 传入 `file_urls` 与 `file_names` 即可完成文件引用，无需单独上传步骤。
+此接口已废弃并移除。请在调用 `/ai/analyze/<conversation_id>/continue/` 时直接通过 Body 传入 `file_urls` 与 `file_names` 即可完成文件引用，无需单独上传步骤。
 
 变更原因：全部采用公网 URL 引用文件，统一由 `continue` 接口处理。
 
@@ -728,7 +670,7 @@ curl -X POST http://localhost:8000/ai/analyze/new/ \
 
 ### 接口信息
 - **方法**: `POST`
-- **路由**: `/ai/analyze/session/<session_id>/continue/`
+- **路由**: `/ai/analyze/<conversation_id>/continue/`
 - **认证**: 是
 - **描述**: 在分析会话中继续追问，支持上传新文件
 
@@ -736,7 +678,7 @@ curl -X POST http://localhost:8000/ai/analyze/new/ \
 
 | 参数 | 类型 | 必须 | 说明 |
 |------|------|------|------|
-| session_id | string | 是 | 会话ID（URL路径参数） |
+| conversation_id | string | 是 | 会话ID（URL路径参数） |
 | prompt | string | 是 | 追问内容 |
 | file_urls | string | 否 | 文件的公网URL（可选） |
 | file_names | string | 否 | 对应的文件原名（可选） |
@@ -750,7 +692,7 @@ curl -X POST http://localhost:8000/ai/analyze/new/ \
 ### 请求示例
 ```bash
 # 纯文本追问
-curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/continue/ \
+curl -X POST http://localhost:8000/ai/analyze/550e8400-xxx/continue/ \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -758,7 +700,7 @@ curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/continue/ \
   }'
 
 # 追问并附加新文件URL
-curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/continue/ \
+curl -X POST http://localhost:8000/ai/analyze/550e8400-xxx/continue/ \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{
@@ -773,7 +715,7 @@ curl -X POST http://localhost:8000/ai/analyze/session/550e8400-xxx/continue/ \
 #### 流式 SSE 响应
 ```
 event: start
-data: {"session_id":"550e8400-xxx","status":"started"}
+data: {"conversation_id":"550e8400-xxx","status":"started"}
 
 event: progress
 data: {"stage":"first_token","elapsed_ms":1234}
@@ -1255,12 +1197,13 @@ async function sendMessageWithUrls(conversationId, prompt, fileUrls = [], fileNa
 
 | 版本 | 日期 | 更新说明 |
 |------|------|--------|
-| 1.8 | 2026-01-24 | **接口调整**：移除 `/ai/analyze/session/<session_id>/start/` 接口，首次分析与后续追问统一使用 `continue`（支持在 Body 传入 `file_urls`/`file_names`）。|
-| 1.7 | 2026-01-24 | **接口调整**：移除 `/ai/analyze/session/<session_id>/upload/` 接口，统一在 `continue` 接口中通过 `file_urls`/`file_names` 引用文件（公网 URL）。|
+| 1.9 | 2026-01-24 | **接口调整**：移除 `/ai/analyze/create/` 接口，统一通过 `/ai/analyze/new/` 创建分析会话并用 `continue` 完成首次与后续分析。|
+| 1.8 | 2026-01-24 | **接口调整**：移除 `/ai/analyze/<conversation_id>/start/` 接口，首次分析与后续追问统一使用 `continue`（支持在 Body 传入 `file_urls`/`file_names`）。|
+| 1.7 | 2026-01-24 | **接口调整**：移除 `/ai/analyze/<conversation_id>/upload/` 接口，统一在 `continue` 接口中通过 `file_urls`/`file_names` 引用文件（公网 URL）。|
 | 1.6 | 2026-01-24 | **接口清理**：移除向后兼容的废弃接口 `/ai/chat/new/old/` 和 `/ai/analyze/new/old/`。所有新接口都采用创建会话与处理内容分离的设计 |
 | 1.5 | 2026-01-24 | **接口优化**：简化 `/ai/chat/new/` 和 `/ai/analyze/new/` 接口，仅负责创建会话并返回会话ID。发送消息和上传文件改为独立调用对应接口。提高API使用的灵活性和一致性 |
-| 1.4 | 2026-01-24 | **重要变更**：升级为仅支持公网URL方式，移除本地文件上传。所有接口现采用 `file_urls` 和 `file_names` 两个参数，文件不下载和保存。严格限制为仅支持 PDF 和图片文件（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）。新增快速分析接口 `/ai/analyze/new/`（推荐使用），会话管理接口 `/ai/analyze/session/` 系列仍可用。所有URL必须公开可访问 |
-| 1.3 | 2026-01-22 | 拆分分析接口为三步流程，支持灵活的文件管理。新增 `/analyze/session/create/`、`/analyze/session/<session_id>/upload/`、`/analyze/session/<session_id>/start/` 接口 |
+| 1.4 | 2026-01-24 | **重要变更**：升级为仅支持公网URL方式，移除本地文件上传。所有接口现采用 `file_urls` 和 `file_names` 两个参数，文件不下载和保存。严格限制为仅支持 PDF 和图片文件（.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp）。新增快速分析接口 `/ai/analyze/new/`（推荐使用），会话管理接口 `/ai/analyze/` 系列仍可用。所有URL必须公开可访问 |
+| 1.3 | 2026-01-22 | 拆分分析接口为三步流程，支持灵活的文件管理。新增 `/analyze/create/`、`/analyze/<conversation_id>/upload/`、`/analyze/<conversation_id>/start/` 接口 |
 | 1.2 | 2026-01-22 | 优化文件关联机制，文件对象包含 `path` 和 `original_name` 两个字段 |
 | 1.1 | 2026-01-22 | 文件关联到具体的用户消息中（`messages[].files`） |
 | 1.0 | 2026-01-17 | 初始版本 |
