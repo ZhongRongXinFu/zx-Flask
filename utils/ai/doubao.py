@@ -77,7 +77,7 @@ def convert_office_to_pdf_sync(file_path: str, timeout_sec: int = 300, poll_inte
         time.sleep(poll_interval)
 
 
-def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Optional[str] = None, conversation_id: Optional[str] = None):
+def chat(messages=None, prompt=None, think=False, files=None, user_id: Optional[str] = None, conversation_id: Optional[str] = None):
     """
     Doubao 对话函数，支持对话历史和多文件上传
     
@@ -93,6 +93,11 @@ def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Opti
     Yields:
         str: 流式输出的文本片段
     """
+    if think:
+        think = "enabled"
+    else:
+        think = "disabled"
+
     # 构建内容列表
     input_array = []
     

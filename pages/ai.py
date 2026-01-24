@@ -496,6 +496,7 @@ def continue_conversation(conversation_id):
     user_id = g.current_user["uuid"]
     data = request.get_json() or {}
     prompt = data.get("prompt", "")
+    think = data.get("think", False)
     
     if not prompt:
         return jsonify({"code": 400, "message": "提示词不能为空"})
@@ -586,7 +587,7 @@ def continue_conversation(conversation_id):
 
                 response_text = ""
                 # 不通过 files 参数，因为文件已在 messages 中
-                for chunk in chat_func(messages=messages, user_id=user_id, conversation_id=conversation_id):
+                for chunk in chat_func(messages=messages, user_id=user_id, think=think, conversation_id=conversation_id):
                     chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
                     response_text += chunk_str
                     yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
@@ -1397,6 +1398,7 @@ def continue_analysis(conversation_id):
     user_id = g.current_user["uuid"]
     data = request.get_json() or {}
     prompt = data.get("prompt", "")
+    think = data.get("think", False)
     
     if not prompt:
         return jsonify({"code": 400, "message": "提示词不能为空"})
@@ -1516,7 +1518,7 @@ def continue_analysis(conversation_id):
                 print(f"\n[继续分析] 会话ID: {conversation_id}, 类型: {analysis_type}")
                 
                 # 不通过 files 参数，因为文件已在 messages 中
-                for chunk in chat_func(messages=messages_with_system, user_id=user_id, conversation_id=conversation_id):
+                for chunk in chat_func(messages=messages_with_system, user_id=user_id, think=think, conversation_id=conversation_id):
                     chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
                     response_text += chunk_str
                     if not first_token_sent:

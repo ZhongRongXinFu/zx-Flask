@@ -62,7 +62,7 @@ def _content_to_text_list(parts: List) -> List[str]:
     return texts
 
 
-def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Optional[str] = None, conversation_id: Optional[str] = None):
+def chat(messages=None, prompt=None, think=False, files=None, user_id: Optional[str] = None, conversation_id: Optional[str] = None):
     """
     DeepSeek 对话函数，支持对话历史和文件上传
     
@@ -77,6 +77,13 @@ def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Opti
     Yields:
         str: 流式输出的文本片段
     """
+    if think:
+        think = "enabled"
+        model = "deepseek-reasoner"
+    else:
+        think = "disabled"
+        model = "deepseek-chat"
+
     # 初始化消息列表
     if messages is None:
         messages = []
@@ -119,7 +126,7 @@ def chat(messages=None, prompt=None, think="disabled", files=None, user_id: Opti
     
     # 调用 API
     stream = client.chat.completions.create(
-        model="deepseek-chat",
+        model=model,
         extra_body={"thinking": {"type": think}},
         messages=messages,
         stream=True,
