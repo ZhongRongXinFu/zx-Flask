@@ -111,13 +111,14 @@ def get_user_conversations():
     # 格式化返回数据，只返回必要的会话信息
     result = []
     for conv in conversations:
+        messages = conv.get("messages") or []
         result.append({
             "id": conv["id"],
             "model": conv["model"],
             "title": conv["title"],
             "created_at": conv.get("created_at"),
             "updated_at": conv.get("updated_at"),
-            "message_count": len(conv.get("messages", [])) if "messages" in conv else 0
+            "message_count": len(messages)
         })
     
     return jsonify({
