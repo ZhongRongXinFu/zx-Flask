@@ -33,8 +33,8 @@ ai_page = Blueprint('ai', __name__)
 
 # 固定分析提示词
 ANALYSIS_PROMPTS = {
-    "personal": """不用管我上传的文件，随便输出一点markdown格式的文本内容+表格测试一下，限制200token""",
-    "personal2": """个人征信
+    "personal2": """不用管我上传的文件，随便输出一点markdown格式的文本内容+表格测试一下，限制100token""",
+    "personal": """个人征信
 第一个步骤  写清楚客户的姓名 年纪
 贷款的余额。和担保的余额。(同一个银行核算到一笔)只需要总结未结清的部分，单位万元列举清楚 银行名称和对应的余额担保的贷款 核算贷款的总和 和担保的总和贷款发一个文字清单，担保的发文字清单按排列下顺序，标注数字。数字需要精，核算清楚，不能有任何错误(最后核验比对贷款的汇总金额是否错误的话 就比对 信贷交易授信及负债信息概要里面的，循环贷账户+非循环贷里面的余额 想加一起就可以，核验贷款管理机构数量=非循环贷管理机构数=循环贷账户管理机构数合计一起)
 第二个步骤 
@@ -549,7 +549,7 @@ def continue_conversation(conversation_id):
                             elif fo.get("type") == "file_url":
                                 desc.append(f"[文件] {fo.get('url')}")
                         desc.append(prompt)
-                        user_message = {"role": "user", "content": "\n".join([d for d in desc if d])}
+                        user_message = {"role": "user", "content": "\n".join([d for d in desc if d]), "files": new_db_files}
                     else:
                         content = []
                         for file_obj in new_file_objects:
@@ -568,7 +568,7 @@ def continue_conversation(conversation_id):
                                     }
                                 })
                         content.append({"type": "text", "text": prompt})
-                        user_message = {"role": "user", "content": content}
+                        user_message = {"role": "user", "content": content, "files": new_db_files}
                 else:
                     user_message = {"role": "user", "content": prompt}
                 
@@ -1441,15 +1441,15 @@ def continue_analysis(conversation_id):
         # 验证并准备新文件
         new_file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id)
         
-        # 转换为数据库格式
+        # 转换为数据库格式，保留原始文件名便于审计
         new_db_files = []
         for obj in new_file_objects:
             if obj["type"] == "local_file":
                 new_db_files.append({"path": obj["path"], "original_name": obj["original_name"]})
             elif obj["type"] == "image_url":
-                new_db_files.append({"url": obj["url"], "type": "image_url"})
+                new_db_files.append({"url": obj["url"], "type": "image_url", "original_name": obj.get("original_name")})
             elif obj["type"] == "file_url":
-                new_db_files.append({"url": obj["url"], "type": "file_url"})
+                new_db_files.append({"url": obj["url"], "type": "file_url", "original_name": obj.get("original_name")})
         
         # 扩展会话文件列表
         if new_db_files:
@@ -1470,7 +1470,7 @@ def continue_analysis(conversation_id):
                     # 多模态内容：包含文件URL和文本提示
                     content = []
                     
-                    # 添加文件内容 - 只支持图片URL（PDF暂不支持）
+                    # 添加文件内容 - 支持图片和文档URL
                     for file_obj in new_file_objects:
                         if file_obj.get("type") == "image_url":
                             content.append({
@@ -1479,7 +1479,13 @@ def continue_analysis(conversation_id):
                                     "url": file_obj.get("url")
                                 }
                             })
-                        # file_url（PDF等）暂不支持通过URL直接处理
+                        elif file_obj.get("type") == "file_url":
+                            content.append({
+                                "type": "file_url",
+                                "file_url": {
+                                    "url": file_obj.get("url")
+                                }
+                            })
                     
                     # 添加文本提示
                     content.append({
@@ -1487,7 +1493,7 @@ def continue_analysis(conversation_id):
                         "text": prompt
                     })
                     
-                    user_message = {"role": "user", "content": content}
+                    user_message = {"role": "user", "content": content, "files": new_db_files}
                 else:
                     # 仅文本内容
                     user_message = {"role": "user", "content": prompt}
