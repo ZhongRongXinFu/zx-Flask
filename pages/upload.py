@@ -107,62 +107,70 @@ def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None
         temp_file_path = absolute_path
         is_converted = False
         
+        convert_error = None
+
         if category == "ai-chat" and f".{ext}" in OFFICE_EXTS:
             # 先保存原始文件到临时位置
             temp_file_path = absolute_path
             file.save(temp_file_path)
-            
-            # 提交转换任务
-            task_id = submit_convert(temp_file_path, timeout_sec=300)
-            
-            # 等待转换完成（最多等待300秒）
-            start_time = time.time()
-            max_wait = 300
-            pdf_path = None
-            
-            while time.time() - start_time < max_wait:
-                task_result = query_task(task_id)
-                if task_result["ok"]:
-                    if task_result["status"] == "DONE":
-                        pdf_path = task_result["pdf"]
-                        is_converted = True
-                        break
-                    elif task_result["status"] == "FAILED":
-                        raise RuntimeError(f"PDF转换失败: {task_result.get('error', '未知错误')}")
-                
-                time.sleep(0.5)  # 每500ms检查一次
-            
-            if not is_converted:
-                raise RuntimeError("PDF转换超时")
-            
-            # 删除原始文件
+
             try:
-                os.remove(temp_file_path)
-            except:
-                pass
-            
-            # 使用PDF文件替代原始文件
-            # 修改扩展名为pdf，重新构建路径
-            ext = "pdf"
-            if use_filename:
-                unique_filename = f"{use_filename}.pdf"
-            else:
-                unique_filename = f"{uuid.uuid4().hex}.pdf"
-            
-            if subcategory and subsubcategory:
-                relative_path = os.path.join(category, subcategory, subsubcategory, unique_filename)
-            elif subcategory:
-                relative_path = os.path.join(category, subcategory, unique_filename)
-            else:
-                relative_path = os.path.join(category, unique_filename)
-            
-            absolute_path = os.path.join(base_dir, relative_path)
-            os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
-            
-            # 移动转换后的PDF到目标位置
-            import shutil
-            shutil.move(pdf_path, absolute_path)
-            file_type = "document"
+                # 提交转换任务
+                task_id = submit_convert(temp_file_path, timeout_sec=300)
+
+                # 等待转换完成（最多等待300秒）
+                start_time = time.time()
+                max_wait = 300
+                pdf_path = None
+
+                while time.time() - start_time < max_wait:
+                    task_result = query_task(task_id)
+                    if task_result["ok"]:
+                        if task_result["status"] == "DONE":
+                            pdf_path = task_result["pdf"]
+                            is_converted = True
+                            break
+                        elif task_result["status"] == "FAILED":
+                            raise RuntimeError(f"PDF转换失败: {task_result.get('error', '未知错误')}")
+
+                    time.sleep(0.5)  # 每500ms检查一次
+
+                if not is_converted:
+                    print("PDF转换超时")
+                    raise RuntimeError("PDF转换超时")
+
+                # 删除原始文件
+                try:
+                    os.remove(temp_file_path)
+                except:
+                    pass
+
+                # 使用PDF文件替代原始文件
+                # 修改扩展名为pdf，重新构建路径
+                ext = "pdf"
+                if use_filename:
+                    unique_filename = f"{use_filename}.pdf"
+                else:
+                    unique_filename = f"{uuid.uuid4().hex}.pdf"
+
+                if subcategory and subsubcategory:
+                    relative_path = os.path.join(category, subcategory, subsubcategory, unique_filename)
+                elif subcategory:
+                    relative_path = os.path.join(category, subcategory, unique_filename)
+                else:
+                    relative_path = os.path.join(category, unique_filename)
+
+                absolute_path = os.path.join(base_dir, relative_path)
+                os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
+
+                # 移动转换后的PDF到目标位置
+                import shutil
+                shutil.move(pdf_path, absolute_path)
+                file_type = "document"
+            except Exception as convert_exc:
+                convert_error = f"PDF转换失败，已保留原文件: {convert_exc}"
+                # 保留原始文件，不再删除
+                is_converted = False
         else:
             # 保存文件
             file.save(absolute_path)
@@ -181,10 +189,12 @@ def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None
             "size": file_size,
             "type": file_type,
             "converted": is_converted,
+            "convert_error": convert_error,
             "uploaded_at": datetime.now().isoformat()
         }
         
     except Exception as e:
+        print(f"文件保存失败: {str(e)}")
         # 如果保存失败，尝试删除已创建的文件
         if os.path.exists(absolute_path):
             try:

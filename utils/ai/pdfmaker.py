@@ -96,6 +96,11 @@ def _convert_one(src_path: Path, timeout_sec: int = 300) -> str:
         str(src_path),
     ]
 
+
+    env = os.environ.copy()
+    env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    env.setdefault("HOME", "/tmp")
+
     # NOTE：捕获输出便于排错；timeout 防止卡死占线程
     p = subprocess.run(
         cmd,
@@ -103,6 +108,7 @@ def _convert_one(src_path: Path, timeout_sec: int = 300) -> str:
         stderr=subprocess.PIPE,
         text=True,
         timeout=timeout_sec,
+        env=env,
     )
 
     if p.returncode != 0 or not pdf_path.exists():
