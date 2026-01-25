@@ -751,7 +751,8 @@ def ai_redeem_code_create():
 def ai_redeem_code_redeem():
     user = g.current_user
     user_uuid = user["uuid"]
-    code = request.form.get("code", None)
+    data = request.get_json() or {}
+    code = data.get("code")
     if not code:
         return jsonify({"code": 400, "message": "缺少 code 参数"}), 400
     connection = connect()
@@ -975,9 +976,14 @@ def ai_redeem_code_list():
 @login_required
 @op_required
 def ai_redeem_code_delete():
-    codes = request.form.getlist("codes[]")
+    data = request.get_json() or {}
+    codes = data.get("codes")
     if not codes:
         return jsonify({"code": 400, "message": "缺少 codes 参数"}), 400
+    if isinstance(codes, str):
+        codes = [codes]
+    if not isinstance(codes, (list, tuple)):
+        return jsonify({"code": 400, "message": "codes 参数格式错误"}), 400
     connection = connect()
     sql = "DELETE FROM ai_redeem_code WHERE code IN (%s)" % ",".join(["%s"] * len(codes))
     try:
