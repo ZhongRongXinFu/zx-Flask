@@ -506,6 +506,9 @@ def continue_conversation(conversation_id):
     if not conversation:
         return jsonify({"code": 404, "message": "对话不存在"})
     
+    # 检查是否是分析类型的会话
+    analysis_type = conversation.get("analysis_type") or "company"
+    
     model = conversation["model"]
     messages = conversation["messages"]
     conversation_files = conversation["files"]
@@ -540,6 +543,19 @@ def continue_conversation(conversation_id):
 
         def generate():
             # try:
+                # 如果是分析类型的会话，先检查并扣除配额
+                if analysis_type:
+                    has_enough, current_quota = check_analysis_quota(user_id, analysis_type)
+                    quota_cost = 1 if analysis_type == "personal" else 2
+                    
+                    if not has_enough:
+                        yield f"event: error\ndata: {json.dumps({{'status': 'error', 'code': 402, 'message': '配额不足', 'data': {{'required': {quota_cost}, 'current': {current_quota}}}}})}\n\n"
+                        return
+                    
+                    if not deduct_analysis_quota(user_id, analysis_type):
+                        yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': '配额扣除失败'})}\n\n"
+                        return
+                
                 # 构建用户消息 - 如果有文件，需要构建多模态内容格式
                 if new_file_objects:
                     # 对 deepseek 强制纯文本描述；其他模型保留多模态
@@ -596,7 +612,11 @@ def continue_conversation(conversation_id):
                 messages.append({"role": "assistant", "content": response_text})
                 update_conversation(conversation_id, messages, conversation_files)
 
-                yield f"event: end\ndata: {json.dumps({'status': 'completed'})}\n\n"
+                # 返回成功状态，如果是分析类型则包含配额消耗信息
+                end_data = {'status': 'completed'}
+                if analysis_type:
+                    end_data['quota_cost'] = 1 if analysis_type == "personal" else 2
+                yield f"event: end\ndata: {json.dumps(end_data)}\n\n"
             # except Exception as e:
             #     yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
 
