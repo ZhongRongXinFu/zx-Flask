@@ -181,7 +181,7 @@ def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None
         url_path = relative_path.replace('\\', '/')
         
         if category in ['avatar', 'product_icon', 'richtext', 'swiper', 'title']:
-            t = "t=" + str(int(time.time()))
+            t = "?t=" + str(int(time.time()))
         else:
             t = ""
 
