@@ -116,6 +116,8 @@ def get_user_conversations():
             "id": conv["id"],
             "model": conv["model"],
             "title": conv["title"],
+            "analysis_type": conv.get("analysis_type"),
+            "is_analysis": bool(conv.get("analysis_type")),
             "created_at": conv.get("created_at"),
             "updated_at": conv.get("updated_at"),
             "message_count": len(messages)
@@ -155,6 +157,8 @@ def get_conversation_history(conversation_id):
                 "id": conversation["id"],
                 "model": conversation["model"],
                 "title": conversation["title"],
+                "analysis_type": conversation.get("analysis_type"),
+                "is_analysis": bool(conversation.get("analysis_type")),
                 "messages": conversation.get("messages", []),
                 "files": conversation.get("files", []),
                 "created_at": conversation.get("created_at"),
@@ -506,14 +510,45 @@ def continue_conversation(conversation_id):
     if not conversation:
         return jsonify({"code": 404, "message": "对话不存在"})
     
-    # 检查是否是分析类型的会话
-    analysis_type = conversation.get("analysis_type") or "company"
+    # 检查是否是分析类型的会话（普通对话不扣配额）
+    analysis_type = conversation.get("analysis_type")
     
     model = conversation["model"]
     messages = conversation["messages"]
     conversation_files = conversation["files"]
     
     try:
+        # 分析会话提前校验配额，不足直接返回 JSON 错误
+        quota_cost = 1 if analysis_type == "personal" else 2 if analysis_type else 0
+        if analysis_type:
+            has_enough, current_quota = check_analysis_quota(user_id, analysis_type)
+            if not has_enough:
+                def generate_quota_error():
+                    # 先推送一条注释行以触发客户端建立事件流
+                    yield ": keep-alive\n\n"
+                    # 先发 start 事件，确保前端建立 SSE 监听后能收到 error 事件
+                    yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
+                    payload = {
+                        "status": "error",
+                        "code": 402,
+                        "message": "配额不足",
+                        "data": {"required": quota_cost, "current": current_quota}
+                    }
+                    yield f"event: error\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    # 结束事件，避免前端长时间等待
+                    yield f"event: end\ndata: {json.dumps({'status': 'error'})}\n\n"
+                return Response(
+                    stream_with_context(generate_quota_error()),
+                    mimetype="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache, no-transform",
+                        "Pragma": "no-cache",
+                        "X-Accel-Buffering": "no",
+                        "Connection": "keep-alive",
+                        "Content-Type": "text/event-stream; charset=utf-8"
+                    },
+                    status=200
+                )
         # 仅支持公网URL
         file_urls = data.get("file_urls") or []
         file_names = data.get("file_names") or []
@@ -543,15 +578,8 @@ def continue_conversation(conversation_id):
 
         def generate():
             # try:
-                # 如果是分析类型的会话，先检查并扣除配额
+                # 如果是分析类型的会话，扣除配额
                 if analysis_type:
-                    has_enough, current_quota = check_analysis_quota(user_id, analysis_type)
-                    quota_cost = 1 if analysis_type == "personal" else 2
-                    
-                    if not has_enough:
-                        yield f"event: error\ndata: {json.dumps({{'status': 'error', 'code': 402, 'message': '配额不足', 'data': {{'required': {quota_cost}, 'current': {current_quota}}}}})}\n\n"
-                        return
-                    
                     if not deduct_analysis_quota(user_id, analysis_type):
                         yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': '配额扣除失败'})}\n\n"
                         return
@@ -615,7 +643,7 @@ def continue_conversation(conversation_id):
                 # 返回成功状态，如果是分析类型则包含配额消耗信息
                 end_data = {'status': 'completed'}
                 if analysis_type:
-                    end_data['quota_cost'] = 1 if analysis_type == "personal" else 2
+                    end_data['quota_cost'] = quota_cost
                 yield f"event: end\ndata: {json.dumps(end_data)}\n\n"
             # except Exception as e:
             #     yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
