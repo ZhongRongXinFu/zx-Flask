@@ -19,9 +19,7 @@ ALLOWED_EXTENSIONS = {
     # 图片
     'image': {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'},
     # 文档
-    'document': {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'csv'},
-    # 其他
-    'other': {'zip', 'rar', '7z', 'tar', 'gz'}
+    'document': {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'csv'}
 }
 
 # 最大文件大小（字节）
@@ -181,7 +179,13 @@ def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None
         
         # 构建公网 URL
         url_path = relative_path.replace('\\', '/')
-        public_url = f"https://static.zhongrongxinfu.cn/{url_path}"
+        
+        if category in ['avatar', 'product_icon', 'richtext', 'swiper', 'title']:
+            t = "t=" + str(int(time.time()))
+        else:
+            t = ""
+
+        public_url = f"https://static.zhongrongxinfu.cn/{url_path}{t}"
         
         return True, {
             "filename": original_filename if not is_converted else original_filename.rsplit('.', 1)[0] + '.pdf',
@@ -456,17 +460,44 @@ def delete_file():
     user_id = g.current_user["uuid"]
     is_admin = str(g.current_user.get("is_op", "0")) == "1"
     
+    def _normalize_delete_path(raw_path: str):
+        """清洗前端传入的路径，兼容域名、uploads 前缀、查询参数等。"""
+        if not raw_path:
+            return None
+
+        # 去掉查询参数
+        path_no_query = raw_path.split("?", 1)[0].strip()
+
+        # 去掉可能出现的域名前缀
+        for prefix in (
+            "https://api.zhongrongxinfu.cn/",
+            "http://api.zhongrongxinfu.cn/",
+            "https://static.zhongrongxinfu.cn/",
+            "http://static.zhongrongxinfu.cn/",
+        ):
+            if path_no_query.startswith(prefix):
+                path_no_query = path_no_query[len(prefix):]
+                break
+
+        # 去掉开头的斜杠
+        while path_no_query.startswith('/'):
+            path_no_query = path_no_query[1:]
+
+        # 去掉 uploads/ 前缀（公网 URL 会包含 uploads/）
+        if path_no_query.startswith("uploads/"):
+            path_no_query = path_no_query[len("uploads/"):]
+
+        # 标准化为无首尾斜杠的相对路径
+        return path_no_query.strip('/')
+
     # 获取要删除的路径
-    path = request.json.get("path") if request.is_json else request.form.get("path")
-    path = path.replace("https://api.zhongrongxinfu.cn/", "")
-    if path.startswith("/"):
-        path = path[1:]
-    
+    raw_path = request.json.get("path") if request.is_json else request.form.get("path")
+    path = _normalize_delete_path(raw_path)
+
     if not path:
         return jsonify({"code": 400, "message": "请提供要删除的路径"}), 400
-    
+
     # 防止路径遍历攻击
-    path = path.strip('/')
     if '..' in path or path.startswith('/'):
         return jsonify({"code": 400, "message": "非法的路径"}), 400
     
