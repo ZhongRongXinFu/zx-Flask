@@ -6,13 +6,67 @@ import os
 import uuid
 import time
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify, g
 from settings import UPLOAD_FILE_DIR
 from utils.login import login_required, op_required
 from utils.ai.pdfmaker import submit_convert, query_task, OFFICE_EXTS
+from utils.mysql import connect
 
 upload_page = Blueprint('upload', __name__)
+
+
+def _check_login_for_category(category: str):
+    """
+    为特定 category 检查登录状态
+    仅在 category != 'avatar' 时需要登录
+    
+    成功时返回 (True, None)
+    失败时返回 (False, error_response)
+    """
+    if category == 'avatar':
+        # avatar 可以不登录
+        return True, None
+    
+    # 其他分类需要验证 token
+    token = request.headers.get('Authorization')
+    if token and token.startswith('Bearer '):
+        token = token[7:]
+    if not token:
+        token = request.headers.get('X-Token')
+    
+    if not token:
+        return False, jsonify({"code": 401, "message": "请先登录"}), 401
+    
+    conn = connect()
+    try:
+        with conn.cursor() as cursor:
+            # 先删除过期的 token
+            cursor.execute("""
+                DELETE FROM user_token
+                WHERE token = %s AND expire_at <= %s
+            """, (token, datetime.now(timezone.utc)))
+            
+            # 查询有效的 token 和用户信息
+            cursor.execute("""
+                SELECT u.*
+                FROM user_token t
+                JOIN user u ON t.uuid = u.uuid
+                WHERE t.token = %s AND t.expire_at > %s
+            """, (token, datetime.now(timezone.utc)))
+            user = cursor.fetchone()
+            
+            if not user:
+                return False, jsonify({"code": 401, "message": "登录已过期，请重新登录"}), 401
+            
+            # 存到 g 里，后续接口直接用 g.current_user
+            g.current_user = user
+            conn.commit()
+            return True, None
+    except Exception as e:
+        return False, jsonify({"code": 500, "message": f"登录验证失败: {str(e)}"}), 500
+    finally:
+        conn.close()
 
 # 允许的文件扩展名
 ALLOWED_EXTENSIONS = {
@@ -284,11 +338,11 @@ def upload_file():
     file = request.files['file']
     category = request.form.get('category', 'uploads')  # 默认分类为 uploads
     
-    # 只有 avatar 分类可以不登录，其他分类需要登录
-    if category != 'avatar':
-        # 检查登录状态
-        if 'current_user' not in g or g.current_user is None:
-            return jsonify({"code": 401, "message": "请先登录"}), 401
+    # 检查登录状态（avatar 分类可以不登录）
+    login_ok, login_error = _check_login_for_category(category)
+    if not login_ok:
+        return login_error
+    
     subcategory = request.form.get('subcategory')  # 可选的二级分类
     subsubcategory = request.form.get('subsubcategory')  # 可选的三级分类
     custom_filename = request.form.get('filename')  # 可选的自定义文件名
