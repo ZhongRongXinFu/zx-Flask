@@ -7,6 +7,7 @@ from flask import Flask, Blueprint, Response, stream_with_context, request, json
 from utils.token import *
 from utils.account import *
 from utils.wechat import *
+from utils.account import account_check_phone_openid, account_create_temp, account_update_by_uuid
 from utils.login import login_required, op_required
 wechat_page = Blueprint('wechat', __name__)
 
@@ -67,39 +68,94 @@ def wechat_login(f):
     return jsonify(result)
 
 
-@wechat_page.route("/register/client/miniprogram/", methods=["POST"])
-def wechat_register():
+@wechat_page.route("/register/init/miniprogram/", methods=["POST"])
+def wechat_register_init():
     """
-    处理微信小程序用户注册请求
+    初始化注册流程：根据微信手机号动态令牌换取手机号，检查是否重复后生成uuid
     请求参数: {
         'code': '微信登录凭证',
-        'nickname': '用户昵称',
-        'avatar': '头像URL',
-        'phone': '手机号（可选）'
+        'phone_code': '微信手机号动态令牌'
     }
-    返回: 注册成功后自动登录，返回token
+    返回: {
+        'code': 200,
+        'uuid': '生成的用户UUID',
+        'openid': 'WeChat openid',
+        'phone': '手机号'
+    }
     """
     data = request.get_json() or {}
-    openid= data.get("openid")
+    code = data.get("code")
+    phone_code = data.get("phone_code")
+
+    if not code:
+        return jsonify({"code": 400, "message": "缺少 code 参数"}), 400
+    if not phone_code:
+        return jsonify({"code": 400, "message": "缺少 phone_code 参数"}), 400
+    
+    # 获取openid
+    result = get_openid(code)
+    if result["code"] != 1:
+        return jsonify({"code": 400, "message": "获取openid失败", "detail": result}), 400
+
+    openid = result["openid"]
+
+    # 通过动态令牌获取真实手机号
+    phone_result = get_phone_number(phone_code)
+    if phone_result["code"] != 1:
+        return jsonify({"code": 400, "message": "获取手机号失败", "detail": phone_result}), 400
+
+    phone = phone_result["phone"]
+    
+    # 检查手机号和openid是否已存在
+    check_result = account_check_phone_openid(phone, openid)
+    if check_result["code"] != 200:
+        return jsonify(check_result), 400
+    
+    # 创建临时用户，只保存phone和openid
+    create_result = account_create_temp(phone, openid)
+    if create_result["code"] != 200:
+        return jsonify(create_result), 400
+    
+    return jsonify({
+        "code": 200,
+        "message": "初始化成功，请完成注册",
+        "data": {
+            "uuid": create_result["uuid"],
+            "openid": openid,
+            "phone": phone
+        }
+    })
+
+
+@wechat_page.route("/register/complete/miniprogram/", methods=["POST"])
+def wechat_register_complete():
+    """
+    完成注册流程：更新用户的昵称和头像，并返回token
+    请求参数: {
+        'uuid': '用户UUID',
+        'nickname': '用户昵称',
+        'avatar': '头像URL（可选）'
+    }
+    返回: {
+        'code': 200,
+        'token': '登录token',
+        'message': '注册成功'
+    }
+    """
+    data = request.get_json() or {}
+    user_uuid = data.get("uuid")
     nickname = data.get("nickname", "微信用户")
     avatar = data.get("avatar")
-    idd = data.get("uuid")
 
-    if not openid:
-        return jsonify({"code": 400, "message": "缺少 openid 参数"}), 400
+    if not user_uuid:
+        return jsonify({"code": 400, "message": "缺少 uuid 参数"}), 400
     
-    # 检查用户是否已存在
-    info = account_exist(openid)
-    if info["exists"]:
-        return jsonify({"code": 400, "message": "用户已存在，请直接登录"}), 400
+    # 更新用户的昵称和头像
+    update_result = account_update_by_uuid(user_uuid, nickname, avatar)
+    if update_result["code"] != 200:
+        return jsonify(update_result), 400
     
-    # 创建新账户
-    r = account_create(nickname=nickname, wechat=openid, avatar=avatar, uuid=idd)
-    if r["code"] != 200:
-        return jsonify({"code": 0, "message": "账号创建失败: " + r["message"]})
-    
-    # 注册成功后自动登录
-    user_uuid = r["uuid"]
+    # 生成token登录
     token = gen_token()
     expire = gen_expire(days=30)
     

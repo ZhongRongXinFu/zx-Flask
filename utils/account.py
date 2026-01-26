@@ -14,8 +14,8 @@ def account_create(nickname, wechat, email=None, phone=None, avatar=None, uuid=N
             result = cursor.fetchone()
             if result is not None: return { "code": 400, "message": "账号已存在" }
             user_uuid = str(uuid.uuid4()) if uuid is None else uuid
-            sql = "INSERT INTO `user` (uuid, nickname, wechat, email, phone, avatar, vip_type, vip_expire, ai_quota) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
-            cursor.execute(sql, (user_uuid, nickname, wechat, email, phone, avatar, "copper", None, 0))
+            sql = "INSERT INTO `user` (uuid, nickname, wechat, email, phone, avatar) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+            cursor.execute(sql, (user_uuid, nickname, wechat, email, phone, avatar))
             result = cursor.fetchone()
         connection.commit()
         return { "code": 200, "message": "账号创建成功", "uuid": user_uuid }
@@ -47,8 +47,6 @@ def account_info(uid) -> dict:
                 email, 
                 phone,
                 avatar,
-                vip_type,
-                vip_expire,
                 ai_quota,
                 is_op
              FROM `user` WHERE uuid=%s"""
@@ -74,8 +72,6 @@ def account_getall():
                 email, 
                 phone,
                 avatar,
-                vip_type,
-                vip_expire,
                 ai_quota,
                 is_op
              FROM `user` """
@@ -103,7 +99,7 @@ def account_delete(wechat, wechat_again) -> dict:
         connection.close()
 
 def account_update(wechat, key, value) -> dict:
-    allowed_fields = {"nickname", "email", "phone", "avatar", "vip_type", "vip_expire", "ai_quota"}
+    allowed_fields = {"nickname", "email", "phone", "avatar", "ai_quota"}
     if key not in allowed_fields:
         return { "code": 400, "message": "不允许更新该字段" }
     if not account_exist(wechat)["exists"]:
@@ -143,6 +139,88 @@ def account_logout(token):
         conn.close()
 
     return { "code": 200, "message": "已退出登录" }
+
+def account_check_phone_openid(phone, openid) -> dict:
+    """检查手机号和openid是否已存在"""
+    connection = connect()
+    try:
+        with connection.cursor() as cursor:
+            # 检查手机号
+            sql = "SELECT uuid FROM `user` WHERE phone=%s"
+            cursor.execute(sql, (phone,))
+            if cursor.fetchone() is not None:
+                return { "code": 400, "message": "手机号已被注册" }
+            
+            # 检查openid
+            sql = "SELECT uuid FROM `user` WHERE wechat=%s"
+            cursor.execute(sql, (openid,))
+            if cursor.fetchone() is not None:
+                return { "code": 400, "message": "微信账号已被注册" }
+            
+            return { "code": 200, "exists": False }
+    except Exception as e:
+        return { "code": 400, "message": f"检查失败: {str(e)}" }
+    finally:
+        connection.close()
+
+def account_create_temp(phone, openid) -> dict:
+    """创建临时用户（仅包含phone和openid）"""
+    connection = connect()
+    try:
+        user_uuid = str(uuid.uuid4())
+        sql = "INSERT INTO `user` (uuid, wechat, phone) VALUES (%s, %s, %s)"
+        with connection.cursor() as cursor:
+            cursor.execute(sql, (user_uuid, openid, phone))
+        connection.commit()
+        return { "code": 200, "message": "临时用户创建成功", "uuid": user_uuid }
+    except Exception as e:
+        return { "code": 400, "message": f"用户创建失败: {str(e)}" }
+    finally:
+        connection.close()
+
+def account_update_by_uuid(uuid_str, nickname, avatar) -> dict:
+    """根据uuid更新用户的昵称和头像"""
+    connection = connect()
+    try:
+        with connection.cursor() as cursor:
+            sql = "UPDATE `user` SET nickname=%s, avatar=%s WHERE uuid=%s"
+            cursor.execute(sql, (nickname, avatar, uuid_str))
+        connection.commit()
+        return { "code": 200, "message": "用户信息更新成功" }
+    except Exception as e:
+        return { "code": 400, "message": f"更新失败: {str(e)}" }
+    finally:
+        connection.close()
+
+
+def account_update_nickname(uuid_str, nickname) -> dict:
+    """仅更新昵称"""
+    connection = connect()
+    try:
+        with connection.cursor() as cursor:
+            sql = "UPDATE `user` SET nickname=%s WHERE uuid=%s"
+            cursor.execute(sql, (nickname, uuid_str))
+        connection.commit()
+        return { "code": 200, "message": "昵称更新成功" }
+    except Exception as e:
+        return { "code": 400, "message": f"昵称更新失败: {str(e)}" }
+    finally:
+        connection.close()
+
+
+def account_update_avatar(uuid_str, avatar) -> dict:
+    """仅更新头像"""
+    connection = connect()
+    try:
+        with connection.cursor() as cursor:
+            sql = "UPDATE `user` SET avatar=%s WHERE uuid=%s"
+            cursor.execute(sql, (avatar, uuid_str))
+        connection.commit()
+        return { "code": 200, "message": "头像更新成功" }
+    except Exception as e:
+        return { "code": 400, "message": f"头像更新失败: {str(e)}" }
+    finally:
+        connection.close()
 
 if __name__ == "__main__":
     # print(account_create("测试用户", "oU-J716qXHV4IZwjKhIgymHIYcYg"))

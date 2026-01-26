@@ -7,6 +7,7 @@ from flask import Flask, Blueprint, Response, stream_with_context, request, json
 
 from utils.login import login_required, op_required
 from utils.account import *
+from utils.account import account_update_nickname, account_update_avatar
 from utils.mysql import connect
 from utils.token import *
 
@@ -86,13 +87,37 @@ def web_account_profile():
             "phone": user["phone"],
             "avatar": user["avatar"],
             "is_op": user["is_op"],
-            "vip_type": user["vip_type"],
-            "vip_expire": user["vip_expire"],
             "ai_quota": user["ai_quota"]
         }
     }
     print(data)
     return jsonify(data), 200
+
+
+@account_page.route("/profile/update/nickname/", methods=["POST"])
+@login_required
+def web_account_update_nickname():
+    payload = request.get_json() or {}
+    nickname = payload.get("nickname")
+    if not nickname:
+        return jsonify({"code": 400, "message": "缺少 nickname"}), 400
+
+    user_uuid = g.current_user["uuid"]
+    result = account_update_nickname(user_uuid, nickname)
+    return jsonify(result)
+
+
+@account_page.route("/profile/update/avatar/", methods=["POST"])
+@login_required
+def web_account_update_avatar():
+    payload = request.get_json() or {}
+    avatar = payload.get("avatar")
+    if not avatar:
+        return jsonify({"code": 400, "message": "缺少 avatar"}), 400
+
+    user_uuid = g.current_user["uuid"]
+    result = account_update_avatar(user_uuid, avatar)
+    return jsonify(result)
 
 @account_page.route("/info/<uid>/", methods=["GET"])
 @login_required
@@ -149,7 +174,6 @@ def web_account_getall():
     nickname = request.args.get("nickname", type=str)
     email = request.args.get("email", type=str)
     phone = request.args.get("phone", type=str)
-    vip_type = request.args.get("vip_type", type=str)
 
     # 参数校验
     if page < 1:
@@ -160,7 +184,6 @@ def web_account_getall():
     allowed_sort_fields = {
         "created_at": "created_at",
         "ai_quota": "ai_quota",
-        "vip_expire": "vip_expire",
         "is_op": "is_op",
         "nickname": "nickname"
     }
@@ -183,9 +206,6 @@ def web_account_getall():
     if phone:
         where_clauses.append("phone LIKE %s")
         params.append(f"%{phone}%")
-    if vip_type:
-        where_clauses.append("vip_type = %s")
-        params.append(vip_type)
 
     where_sql = ""
     if where_clauses:
@@ -200,7 +220,7 @@ def web_account_getall():
             total = total_result.get("total", 0) if total_result else 0
 
             select_sql = (
-                "SELECT uuid, nickname, wechat, email, phone, avatar, vip_type, vip_expire, ai_quota, is_op, created_at "
+                "SELECT uuid, nickname, wechat, email, phone, avatar, ai_quota, is_op, created_at "
                 "FROM `user`"
                 f"{where_sql} "
                 f"ORDER BY {allowed_sort_fields[sort_by]} {order.upper()} "
