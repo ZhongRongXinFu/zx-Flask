@@ -25,10 +25,32 @@ from utils.login import login_required, op_required
 from settings import PRODUCT_IMAGE_DIR
 
 import pymysql
+import requests
 from utils.mysql import connect
 from utils.ai.basic import *
 
 ai_page = Blueprint('ai', __name__)
+
+
+def get_remote_file_size(url: str) -> int:
+    """
+    通过HEAD请求获取远程文件的大小（bytes）
+    
+    Args:
+        url: 文件URL
+    
+    Returns:
+        文件大小（bytes），如果获取失败返回 -1
+    """
+    try:
+        response = requests.head(url, timeout=10, allow_redirects=True)
+        if response.status_code == 200:
+            content_length = response.headers.get('content-length')
+            if content_length:
+                return int(content_length)
+        return -1
+    except Exception:
+        return -1
 
 
 # 固定分析提示词
@@ -366,16 +388,20 @@ def validate_and_prepare_files(file_urls=None, file_names=None, conversation_id=
             
             # 根据类型生成对应的格式
             if original_ext in ALLOWED_IMAGE_EXTS:
+                file_size = get_remote_file_size(url)
                 result.append({
                     "type": "image_url",
                     "url": url,
-                    "original_name": display_name
+                    "original_name": display_name,
+                    "size": file_size
                 })
             elif original_ext in ALLOWED_PDF_EXTS:
+                file_size = get_remote_file_size(url)
                 result.append({
                     "type": "file_url",
                     "url": url,
-                    "original_name": display_name
+                    "original_name": display_name,
+                    "size": file_size
                 })
     
     return result
@@ -562,15 +588,29 @@ def continue_conversation(conversation_id):
         # 验证并准备新的文件
         new_file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id)
         
-        # 转换为数据库格式，保留原始文件名便于审计
+        # 转换为数据库格式，保留原始文件名和文件大小便于审计
         new_db_files = []
         for obj in new_file_objects:
             if obj["type"] == "local_file":
-                new_db_files.append({"path": obj["path"], "original_name": obj["original_name"]})
+                new_db_files.append({
+                    "path": obj["path"],
+                    "original_name": obj["original_name"],
+                    "size": obj.get("size", -1)
+                })
             elif obj["type"] == "image_url":
-                new_db_files.append({"url": obj["url"], "type": "image_url", "original_name": obj.get("original_name")})
+                new_db_files.append({
+                    "url": obj["url"],
+                    "type": "image_url",
+                    "original_name": obj.get("original_name"),
+                    "size": obj.get("size", -1)
+                })
             elif obj["type"] == "file_url":
-                new_db_files.append({"url": obj["url"], "type": "file_url", "original_name": obj.get("original_name")})
+                new_db_files.append({
+                    "url": obj["url"],
+                    "type": "file_url",
+                    "original_name": obj.get("original_name"),
+                    "size": obj.get("size", -1)
+                })
         
         # 扩展会话文件列表
         if new_db_files:
@@ -1498,15 +1538,29 @@ def continue_analysis(conversation_id):
         # 验证并准备新文件
         new_file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id)
         
-        # 转换为数据库格式，保留原始文件名便于审计
+        # 转换为数据库格式，保留原始文件名和文件大小便于审计
         new_db_files = []
         for obj in new_file_objects:
             if obj["type"] == "local_file":
-                new_db_files.append({"path": obj["path"], "original_name": obj["original_name"]})
+                new_db_files.append({
+                    "path": obj["path"],
+                    "original_name": obj["original_name"],
+                    "size": obj.get("size", -1)
+                })
             elif obj["type"] == "image_url":
-                new_db_files.append({"url": obj["url"], "type": "image_url", "original_name": obj.get("original_name")})
+                new_db_files.append({
+                    "url": obj["url"],
+                    "type": "image_url",
+                    "original_name": obj.get("original_name"),
+                    "size": obj.get("size", -1)
+                })
             elif obj["type"] == "file_url":
-                new_db_files.append({"url": obj["url"], "type": "file_url", "original_name": obj.get("original_name")})
+                new_db_files.append({
+                    "url": obj["url"],
+                    "type": "file_url",
+                    "original_name": obj.get("original_name"),
+                    "size": obj.get("size", -1)
+                })
         
         # 扩展会话文件列表
         if new_db_files:
