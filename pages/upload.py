@@ -211,7 +211,6 @@ def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None
 
 
 @upload_page.route("/", methods=["POST"])
-@login_required
 def upload_file():
     """
     统一文件上传接口
@@ -221,6 +220,10 @@ def upload_file():
         - category: 文件分类（可选），如 'avatar', 'product', 'document', 'ai-chat' 等，用于组织存储目录
         - subcategory: 二级分类（可选），用于在 category 下创建子目录
         - filename: 自定义文件名（可选），不包含扩展名，扩展名使用原始文件的扩展名
+    
+    权限说明:
+        - category=avatar 时可以不登录上传
+        - 其他 category 需要登录
     
     特殊处理:
         当 category=ai-chat 时，如果上传的是 Word/Excel/PowerPoint 文件，将自动转换为 PDF 后保存
@@ -266,6 +269,13 @@ def upload_file():
             category=ai-chat
             filename=my-document
             # 文件将自动转换为PDF后保存，返回的filename会是 my-document.pdf
+        
+        5. 不登录上传头像:
+            POST /upload/
+            file=<图片文件>
+            category=avatar
+            filename=user-avatar
+            # 无需登录即可上传
     """
     # 获取上传的文件
     if 'file' not in request.files:
@@ -273,6 +283,12 @@ def upload_file():
     
     file = request.files['file']
     category = request.form.get('category', 'uploads')  # 默认分类为 uploads
+    
+    # 只有 avatar 分类可以不登录，其他分类需要登录
+    if category != 'avatar':
+        # 检查登录状态
+        if 'current_user' not in g or g.current_user is None:
+            return jsonify({"code": 401, "message": "请先登录"}), 401
     subcategory = request.form.get('subcategory')  # 可选的二级分类
     subsubcategory = request.form.get('subsubcategory')  # 可选的三级分类
     custom_filename = request.form.get('filename')  # 可选的自定义文件名

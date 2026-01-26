@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import uuid
 from utils.mysql import connect
 
-def account_create(nickname, wechat, email=None, phone=None, avatar=None) -> dict:
+def account_create(nickname, wechat, email=None, phone=None, avatar=None, uuid=None) -> dict:
     connection = connect()
     try:
         with connection.cursor() as cursor:
@@ -13,7 +13,7 @@ def account_create(nickname, wechat, email=None, phone=None, avatar=None) -> dic
             cursor.execute(sql, (wechat,))
             result = cursor.fetchone()
             if result is not None: return { "code": 400, "message": "账号已存在" }
-            user_uuid = str(uuid.uuid4())
+            user_uuid = str(uuid.uuid4()) if uuid is None else uuid
             sql = "INSERT INTO `user` (uuid, nickname, wechat, email, phone, avatar, vip_type, vip_expire, ai_quota) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
             cursor.execute(sql, (user_uuid, nickname, wechat, email, phone, avatar, "copper", None, 0))
             result = cursor.fetchone()
