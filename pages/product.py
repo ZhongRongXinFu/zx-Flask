@@ -184,7 +184,7 @@ def create_product():
     product_features = data.get("product_features", "暂无")
     logo = data.get("logo")
 
-    if not logo or not name or not tag or not slogan or not price or not is_online:
+    if not logo or not name or not tag or not slogan or not price or is_online is None:
         return jsonify({"code": 400, "message": "缺少必要字段"})
     
     product_uuid = str(uuid.uuid4())
@@ -236,8 +236,8 @@ def update_product():
 
     # print("request.form:", request.form)
 
-    if not product_uuid or not logo or not name or not tag or not slogan or not price or not is_online:
-        print(product_uuid, logo, name, tag, slogan, price, is_online)
+    if not product_uuid or not logo or not name or not tag or not slogan or not price or is_online is None:
+        # print(product_uuid, logo, name, tag, slogan, price, is_online)
         return jsonify({"code": 400, "message": "缺少必要字段"})
     
     connection = connect()
