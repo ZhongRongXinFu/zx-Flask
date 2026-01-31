@@ -506,7 +506,7 @@ def delete_file():
     返回：
         删除成功：
         {
-            "code": 0,
+            "code": 200,
             "message": "删除成功",
             "data": {
                 "path": "ai-chat/user-uuid",
@@ -619,7 +619,7 @@ def delete_file():
             deleted_type = "directory"
         
         return jsonify({
-            "code": 0,
+            "code": 200,
             "message": "删除成功",
             "data": {
                 "path": path,

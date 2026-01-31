@@ -146,7 +146,7 @@ def get_user_conversations():
         })
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "data": result,
         "total": len(result)
     })
@@ -300,7 +300,7 @@ def update_conversation_title(conversation_id):
         )
         
         return jsonify({
-            "code": 0,
+            "code": 200,
             "message": "标题已更新",
             "data": {
                 "id": conversation_id,
@@ -427,7 +427,7 @@ def delete_all_conversations():
                 break
 
         return jsonify({
-            "code": 0,
+            "code": 200,
             "message": "所有会话已删除",
             "data": {
                 "deleted_conversations": deleted,
@@ -632,7 +632,7 @@ def new_conversation():
     conversation_id = conversation["id"]
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "data": {
             "conversation_id": conversation_id,
             "user_id": user_id,
@@ -835,7 +835,7 @@ def list_user_conversations():
     conversations = list_conversations(user_id, model, limit, offset)
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "data": conversations
     })
 
@@ -851,7 +851,7 @@ def get_conversation_detail(conversation_id):
         return jsonify({"code": 404, "message": "对话不存在"})
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "data": conversation
     })
 
@@ -866,7 +866,7 @@ def delete_conversation_endpoint(conversation_id):
         return jsonify({"code": 404, "message": "对话不存在"})
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "message": "对话已删除"
     })
 
@@ -1202,7 +1202,7 @@ def get_usage_stats():
     
     返回:
         {
-            "code": 0,
+            "code": 200,
             "data": {
                 "time_range": "1d",
                 "start_time": "2024-01-01 00:00:00",
@@ -1246,7 +1246,7 @@ def get_usage_stats():
     try:
         stats = AIUsageTracker.get_user_usage_stats(user_id, time_range, model_key)
         return jsonify({
-            "code": 0,
+            "code": 200,
             "data": stats
         })
     except Exception as e:
@@ -1265,7 +1265,7 @@ def get_usage_history():
     
     返回:
         {
-            "code": 0,
+            "code": 200,
             "data": [
                 {
                     "id": 1,
@@ -1294,7 +1294,7 @@ def get_usage_history():
     try:
         history = AIUsageTracker.get_user_usage_history(user_id, time_range, limit)
         return jsonify({
-            "code": 0,
+            "code": 200,
             "data": history
         })
     except Exception as e:
@@ -1321,7 +1321,7 @@ def get_model_config_endpoint():
             return jsonify({"code": 404, "message": "模型配置不存在"})
         
         return jsonify({
-            "code": 0,
+            "code": 200,
             "data": config
         })
     except Exception as e:
@@ -1366,7 +1366,7 @@ def add_model_config_endpoint():
         
         if success:
             return jsonify({
-                "code": 0,
+                "code": 200,
                 "message": "配置保存成功"
             })
         else:
@@ -1389,7 +1389,7 @@ def get_platform_stats():
     
     返回:
         {
-            "code": 0,
+            "code": 200,
             "data": {
                 "time_range": "1d",
                 "start_time": "2024-01-01 00:00:00",
@@ -1430,7 +1430,7 @@ def get_platform_stats():
             return jsonify({"code": 500, "message": stats['error']})
         
         return jsonify({
-            "code": 0,
+            "code": 200,
             "data": stats
         })
     except Exception as e:
@@ -1459,7 +1459,7 @@ def get_time_series_stats():
         if 'error' in stats:
             return jsonify({"code": 500, "message": stats['error']})
         return jsonify({
-            "code": 0,
+            "code": 200,
             "data": stats
         })
     except Exception as e:
@@ -1481,7 +1481,7 @@ def get_user_ranking():
     
     返回:
         {
-            "code": 0,
+            "code": 200,
             "data": [
                 {
                     "rank": 1,
@@ -1513,7 +1513,7 @@ def get_user_ranking():
     try:
         ranking = AIUsageTracker.get_user_ranking(time_range, model_key, order_by, limit)
         return jsonify({
-            "code": 0,
+            "code": 200,
             "data": ranking
         })
     except Exception as e:
@@ -1595,7 +1595,7 @@ def new_analysis():
     conversation = create_conversation(user_id, model, title, analysis_type)
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "message": "分析会话已创建",
         "data": {
             "conversation_id": conversation.get("id"),
@@ -1825,7 +1825,7 @@ def list_user_analyses():
             results = cursor.fetchall()
         
         return jsonify({
-            "code": 0,
+            "code": 200,
             "data": results,
             "total": total
         })
@@ -1847,7 +1847,7 @@ def get_analysis_detail(conversation_id):
         return jsonify({"code": 400, "message": "这不是一个分析对话"})
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "data": conversation
     })
 
@@ -1880,7 +1880,7 @@ def delete_analysis(conversation_id):
         return jsonify({"code": 500, "message": "删除失败"})
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "message": "分析对话已删除"
     })
 
@@ -1903,7 +1903,7 @@ def get_analysis_quota():
             ai_quota = result["ai_quota"]
             
             return jsonify({
-                "code": 0,
+                "code": 200,
                 "data": {
                     "current_quota": ai_quota,
                     "personal_cost": 1,

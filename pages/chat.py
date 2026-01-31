@@ -126,7 +126,7 @@ def new_conversation():
             return jsonify({"code": 500, "message": f"处理失败: {str(e)}"})
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "data": {
             "conversation_id": conversation_id,
             "user_id": user_id,
@@ -215,7 +215,7 @@ def list_user_conversations():
     conversations = list_conversations(user_id, model, limit, offset)
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "data": conversations
     })
 
@@ -231,7 +231,7 @@ def get_conversation_detail(conversation_id):
         return jsonify({"code": 404, "message": "对话不存在"})
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "data": conversation
     })
 
@@ -246,6 +246,6 @@ def delete_conversation_endpoint(conversation_id):
         return jsonify({"code": 404, "message": "对话不存在"})
     
     return jsonify({
-        "code": 0,
+        "code": 200,
         "message": "对话已删除"
     })
