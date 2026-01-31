@@ -160,10 +160,34 @@ def get_user_conversations():
 @ai_page.route("/conversation/<conversation_id>/history/", methods=["GET"])
 def get_conversation_history(conversation_id):
     """获取会话的历史对话内容（用于会话恢复或查看分享的会话）"""
-    # 获取当前用户ID（可能未登录）
+    # 尝试获取当前用户ID（支持已登录和未登录用户）
     user_id = None
-    if hasattr(g, 'current_user') and g.current_user:
-        user_id = g.current_user.get("uuid")
+    
+    # 尝试从 token 获取用户信息（如果用户已登录）
+    token = request.headers.get('Authorization')
+    if token and token.startswith('Bearer '):
+        token = token[7:]
+    if not token:
+        token = request.headers.get('X-Token')
+    
+    if token:
+        conn = connect()
+        try:
+            with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+                from datetime import datetime, timezone
+                # 查询有效的 token 和用户信息
+                cursor.execute("""
+                    SELECT u.*
+                    FROM user_token t
+                    JOIN user u ON t.uuid = u.uuid
+                    WHERE t.token = %s AND t.expire_at > %s
+                """, (token, datetime.now(timezone.utc)))
+                user = cursor.fetchone()
+                if user:
+                    g.current_user = user
+                    user_id = user.get("uuid")
+        finally:
+            conn.close()
     
     try:
         # 首先从数据库直接查询会话信息，以获取share字段
@@ -184,8 +208,11 @@ def get_conversation_history(conversation_id):
         
         # 检查访问权限
         is_owner = user_id and user_id == conversation_meta["user_id"]
-        is_shared = conversation_meta.get("share", False)
+        # 明确转换为布尔值，处理 NULL、0、1 等各种情况
+        is_shared = bool(conversation_meta.get("share"))
         
+        # print(user_id, conversation_meta["user_id"], is_owner, is_shared)
+
         # 只有所有者或分享公开的会话才能被访问
         if not is_owner and not is_shared:
             return jsonify({
