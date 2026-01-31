@@ -158,23 +158,53 @@ def get_user_conversations():
 
 
 @ai_page.route("/conversation/<conversation_id>/history/", methods=["GET"])
-@login_required
 def get_conversation_history(conversation_id):
-    """获取会话的历史对话内容（用于会话恢复）"""
-    user_id = g.current_user["uuid"]
+    """获取会话的历史对话内容（用于会话恢复或查看分享的会话）"""
+    # 获取当前用户ID（可能未登录）
+    user_id = None
+    if hasattr(g, 'current_user') and g.current_user:
+        user_id = g.current_user.get("uuid")
     
     try:
-        conversation = get_conversation(conversation_id, user_id)
+        # 首先从数据库直接查询会话信息，以获取share字段
+        conn = connect()
+        try:
+            with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+                sql = "SELECT id, user_id, share FROM conversations WHERE id = %s"
+                cursor.execute(sql, (conversation_id,))
+                conversation_meta = cursor.fetchone()
+        finally:
+            conn.close()
+        
+        if not conversation_meta:
+            return jsonify({
+                "code": 404,
+                "message": "会话不存在"
+            }), 404
+        
+        # 检查访问权限
+        is_owner = user_id and user_id == conversation_meta["user_id"]
+        is_shared = conversation_meta.get("share", False)
+        
+        # 只有所有者或分享公开的会话才能被访问
+        if not is_owner and not is_shared:
+            return jsonify({
+                "code": 403,
+                "message": "无权访问此会话"
+            }), 403
+        
+        # 获取完整的会话信息
+        conversation = get_conversation(conversation_id, conversation_meta["user_id"])
         
         if not conversation:
             return jsonify({
                 "code": 404,
-                "message": "会话不存在或无权访问"
-            })
+                "message": "会话不存在"
+            }), 404
         
         # 返回完整的会话信息
         return jsonify({
-            "code": 0,
+            "code": 200,
             "data": {
                 "id": conversation["id"],
                 "model": conversation["model"],
@@ -184,14 +214,16 @@ def get_conversation_history(conversation_id):
                 "messages": conversation.get("messages", []),
                 "files": conversation.get("files", []),
                 "created_at": conversation.get("created_at"),
-                "updated_at": conversation.get("updated_at")
+                "updated_at": conversation.get("updated_at"),
+                "share": conversation.get("share", False),
+                "owner_id": conversation_meta["user_id"]
             }
-        })
+        }), 200
     except Exception as e:
         return jsonify({
             "code": 500,
             "message": f"获取会话历史失败: {str(e)}"
-        })
+        }), 500
 
 
 @ai_page.route("/conversation/<conversation_id>/title/", methods=["PUT"])
@@ -254,6 +286,70 @@ def update_conversation_title(conversation_id):
             "code": 500,
             "message": f"更新标题失败: {str(e)}"
         })
+
+
+@ai_page.route("/conversation/<conversation_id>/share/", methods=["PUT"])
+@login_required
+def update_conversation_share(conversation_id):
+    """修改会话分享状态"""
+    user_id = g.current_user["uuid"]
+    
+    try:
+        # 获取请求数据
+        data = request.get_json()
+        if data is None or "share" not in data:
+            return jsonify({
+                "code": 400,
+                "message": "缺少 share 参数"
+            }), 400
+        
+        share = data["share"]
+        
+        # 验证share参数类型
+        if not isinstance(share, bool):
+            return jsonify({
+                "code": 400,
+                "message": "share 参数必须是布尔值 (true/false)"
+            }), 400
+        
+        # 验证会话是否存在且属于当前用户
+        conversation = get_conversation(conversation_id, user_id)
+        if not conversation:
+            return jsonify({
+                "code": 404,
+                "message": "会话不存在或无权访问"
+            }), 404
+        
+        # 更新分享状态
+        conn = connect()
+        try:
+            with conn.cursor() as cursor:
+                sql = "UPDATE conversations SET share = %s WHERE id = %s AND user_id = %s"
+                cursor.execute(sql, (share, conversation_id, user_id))
+                conn.commit()
+                
+                if cursor.rowcount == 0:
+                    return jsonify({
+                        "code": 404,
+                        "message": "会话不存在或无权访问"
+                    }), 404
+            
+            return jsonify({
+                "code": 200,
+                "message": "分享状态已更新",
+                "data": {
+                    "id": conversation_id,
+                    "share": share
+                }
+            })
+        finally:
+            conn.close()
+    
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "message": f"更新分享状态失败: {str(e)}"
+        }), 500
 
 
 @ai_page.route("/conversation/deleteall/", methods=["DELETE"])
