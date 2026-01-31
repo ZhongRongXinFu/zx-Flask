@@ -1,3 +1,5 @@
+DEBUG = True
+
 DB_HOST = "localhost"
 DB_USER = "api"
 DB_PASSWORD = "cZ6aF0rO0gA0sF2fV5cC1cO0"
@@ -19,6 +21,9 @@ AI_TENCENT_SECRET_KEY = "Pm398FByb5UkrpcGl6QqaJwbGnAOgqri"
 # AI_HUOSHAN_API_KEY = "8cd17edc-4267-4864-a93b-798611626336"  # personal
 AI_HUOSHAN_API_KEY = "6a401bfa-6e6f-44ad-a5b6-e09fe262f592" #company
 
+if DEBUG:
+    UPLOAD_FILE_DIR = "./static"
+else:
+    UPLOAD_FILE_DIR = "/work/static"
 
-UPLOAD_FILE_DIR = "./static/"
-PRODUCT_IMAGE_DIR  = "./static/"
+PRODUCT_IMAGE_DIR  = "./static"

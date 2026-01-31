@@ -1,19 +1,21 @@
-from flask import Flask, Blueprint, jsonify, request, make_response
+from flask import Flask, jsonify
 from flask_cors import CORS
-
-
-
+from settings import DEBUG
 
 app = Flask(__name__)
 
-# 设置最大请求体大小（100MB）
-app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024  # 100MB
+# 设置JSON响应包含中文而非Unicode转义
+app.config['JSON_AS_ASCII'] = False
 
-# 允许跨域所有域名，并允许带 cookie
-CORS(app, 
-     resources={r"/*": {"origins": "*"}}, 
-     supports_credentials=True
-)
+# 设置最大请求体大小（100MB）
+app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024 * 1024  # 100MB
+
+if DEBUG:
+    # 允许跨域所有域名，并允许带 cookie
+    CORS(app, 
+        resources={r"/*": {"origins": "*"}}, 
+        supports_credentials=True
+    )
 
 def count_custom_routes(app):
     return sum(
@@ -21,10 +23,6 @@ def count_custom_routes(app):
         for r in app.url_map.iter_rules()
         if not r.rule.startswith("/static")
     )
-
-
-
-
 
 from pages.ai import ai_page
 from pages.buy import buy_page
@@ -49,4 +47,4 @@ def index():
 if __name__ == "__main__":
     with app.app_context():
         print("你自定义的路由数量：", count_custom_routes(app))
-    app.run(host="0.0.0.0", port=8000, debug=True)
+    app.run(host="0.0.0.0", port=8000, debug=DEBUG)
