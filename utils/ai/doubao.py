@@ -167,7 +167,12 @@ def chat(messages=None, prompt=None, think=False, files=None, user_id: Optional[
         model=model,
         messages=messages_payload,
         stream=True,
-        stream_options={"include_usage": True}
+        stream_options={"include_usage": True},
+        max_tokens=32768,  # 32k - 限制输出长度以提高响应速度
+        temperature=0.1,   # 低温度，降低随机性，更确定性回答
+        top_p=1,           # 核采样
+        frequency_penalty=0,  # 不惩罚频繁词汇
+        extra_body={"thinking": {"type": "disabled"}}  # 强制关闭深度思考
     )
 
     # 流式输出
