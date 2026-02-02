@@ -1,6 +1,65 @@
 # AI 接口 API 文档
 
-**更新时间**: 2026年1月24日
+**更新时间**: 2026年2月2日
+
+## 重要变更说明 (2026-02-02)
+
+### 📌 SSE 流式输出支持思考内容
+
+系统现已支持在 SSE（Server-Sent Events）流式输出中区分**思考内容**和**普通消息内容**：
+
+**新增事件类型**：
+- `event: thinking` - 思考过程内容（仅当模型开启深度思考时）
+- `event: message` - 普通消息内容（最终回答）
+
+**客户端适配指南**：
+
+```javascript
+const eventSource = new EventSource('/ai/chat/continue/xxx');
+
+eventSource.addEventListener('thinking', (e) => {
+  const data = JSON.parse(e.data);
+  console.log('思考内容:', data.content);
+  // 可选：在UI中以不同样式显示思考过程
+  // 例如：灰色字体、折叠面板等
+});
+
+eventSource.addEventListener('message', (e) => {
+  const data = JSON.parse(e.data);
+  console.log('回答内容:', data.message);
+  // 显示最终回答内容
+});
+
+eventSource.addEventListener('start', (e) => {
+  console.log('开始生成');
+});
+
+eventSource.addEventListener('end', (e) => {
+  console.log('生成完成');
+  eventSource.close();
+});
+```
+
+**返回数据格式**：
+
+思考事件：
+```
+event: thinking
+data: {"content": "让我分析一下这个问题..."}
+```
+
+消息事件：
+```
+event: message
+data: {"message": "根据分析结果，建议..."}
+```
+
+**关键特性**：
+- ✅ 思考内容不计入最终回答文本
+- ✅ 客户端可选择是否显示思考过程
+- ✅ 向后兼容（不处理 thinking 事件不影响功能）
+- ✅ analyze 接口默认关闭思考以提高速度
+- ⚠️ 仅 doubao 模型支持思考内容输出
 
 ## 重要变更说明 (2026-01-24)
 

@@ -163,6 +163,9 @@ def chat(messages=None, prompt=None, think=False, files=None, user_id: Optional[
         }]
     
     # 调用 API
+    # 根据 think 参数决定是否启用深度思考
+    thinking_mode = "enabled" if think else "disabled"
+    
     response = client.chat.completions.create(
         model=model,
         messages=messages_payload,
@@ -172,8 +175,9 @@ def chat(messages=None, prompt=None, think=False, files=None, user_id: Optional[
         temperature=0.1,   # 低温度，降低随机性，更确定性回答
         top_p=1,           # 核采样
         frequency_penalty=0,  # 不惩罚频繁词汇
-        extra_body={"thinking": {"type": "disabled"}}  # 强制关闭深度思考
+        extra_body={"thinking": {"type": thinking_mode}}  # 根据参数控制深度思考
     )
+    print("思考模式", thinking_mode)
 
     # 流式输出
     for event in response:
@@ -278,10 +282,20 @@ def chat(messages=None, prompt=None, think=False, files=None, user_id: Optional[
         if not getattr(event, "choices", None):
             continue
 
-        delta = event.choices[0].delta
+        choice = event.choices[0]
+        delta = choice.delta
+        
+        # 检查是否是思考内容（reasoning_content）
+        reasoning_content = getattr(delta, "reasoning_content", None)
+        # print("思考", reasoning_content)
+        if reasoning_content:
+            yield {"type": "thinking", "content": reasoning_content}
+            continue
+        
+        # 普通内容
         text = getattr(delta, "content", None)
         if text:
-            yield text
+            yield {"type": "message", "content": text}
 
 if __name__ == "__main__":
     # 测试单轮对话

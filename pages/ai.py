@@ -631,6 +631,7 @@ def continue_conversation(conversation_id):
     data = request.get_json() or {}
     prompt = data.get("prompt", "")
     think = data.get("think", False)
+    # print("think:", think)
     
     if not prompt:
         return jsonify({"code": 400, "message": "提示词不能为空"})
@@ -776,9 +777,23 @@ def continue_conversation(conversation_id):
                 response_text = ""
                 # 不通过 files 参数，因为文件已在 messages 中
                 for chunk in chat_func(messages=messages, user_id=user_id, think=think, conversation_id=conversation_id):
-                    chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
-                    response_text += chunk_str
-                    yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
+                    # 处理字典格式（包含 type 和 content）
+                    if isinstance(chunk, dict):
+                        chunk_type = chunk.get("type", "message")
+                        chunk_content = chunk.get("content", "")
+                        
+                        if chunk_type == "thinking":
+                            # 思考内容通过 thinking 事件返回
+                            yield f"event: thinking\ndata: {json.dumps({'content': chunk_content}, ensure_ascii=False)}\n\n"
+                        else:
+                            # 普通消息内容
+                            response_text += chunk_content
+                            yield f"event: message\ndata: {json.dumps({'message': chunk_content}, ensure_ascii=False)}\n\n"
+                    else:
+                        # 兼容旧格式（字符串）
+                        chunk_str = str(chunk)
+                        response_text += chunk_str
+                        yield f"event: message\ndata: {json.dumps({'message': chunk_str}, ensure_ascii=False)}\n\n"
 
                 # 保存助手响应到数据库
                 messages.append({"role": "assistant", "content": response_text})
@@ -1596,7 +1611,7 @@ def continue_analysis(conversation_id):
     user_id = g.current_user["uuid"]
     data = request.get_json() or {}
     prompt = data.get("prompt", "")
-    think = data.get("think", False)
+    think = False  # analyze 情况下强制关闭思考以提高响应速度
     
     if not prompt:
         return jsonify({"code": 400, "message": "提示词不能为空"})
@@ -1737,14 +1752,38 @@ def continue_analysis(conversation_id):
                 
                 # 不通过 files 参数，因为文件已在 messages 中
                 for chunk in chat_func(messages=messages_with_system, user_id=user_id, think=think, conversation_id=conversation_id):
-                    chunk_str = chunk if isinstance(chunk, str) else json.dumps(chunk, ensure_ascii=False)
-                    response_text += chunk_str
-                    if not first_token_sent:
-                        first_token_sent = True
-                        elapsed_ms = int((time.time() - start_time) * 1000)
-                        yield f"event: progress\ndata: {json.dumps({'stage': 'first_token', 'elapsed_ms': elapsed_ms})}\n\n"
-                    print(chunk_str, end='', flush=True)  # 实时打印AI输出
-                    yield f"event: message\ndata: {json.dumps({'message': chunk_str})}\n\n"
+                    # 处理字典格式（包含 type 和 content）
+                    if isinstance(chunk, dict):
+                        chunk_type = chunk.get("type", "message")
+                        chunk_content = chunk.get("content", "")
+                        
+                        if chunk_type == "thinking":
+                            # 思考内容通过 thinking 事件返回，不计入 response_text
+                            if not first_token_sent:
+                                first_token_sent = True
+                                elapsed_ms = int((time.time() - start_time) * 1000)
+                                yield f"event: progress\ndata: {json.dumps({'stage': 'first_token', 'elapsed_ms': elapsed_ms})}\n\n"
+                            print(f"[思考] {chunk_content}", end='', flush=True)
+                            yield f"event: thinking\ndata: {json.dumps({'content': chunk_content}, ensure_ascii=False)}\n\n"
+                        else:
+                            # 普通消息内容
+                            response_text += chunk_content
+                            if not first_token_sent:
+                                first_token_sent = True
+                                elapsed_ms = int((time.time() - start_time) * 1000)
+                                yield f"event: progress\ndata: {json.dumps({'stage': 'first_token', 'elapsed_ms': elapsed_ms})}\n\n"
+                            print(chunk_content, end='', flush=True)
+                            yield f"event: message\ndata: {json.dumps({'message': chunk_content}, ensure_ascii=False)}\n\n"
+                    else:
+                        # 兼容旧格式（字符串）
+                        chunk_str = str(chunk)
+                        response_text += chunk_str
+                        if not first_token_sent:
+                            first_token_sent = True
+                            elapsed_ms = int((time.time() - start_time) * 1000)
+                            yield f"event: progress\ndata: {json.dumps({'stage': 'first_token', 'elapsed_ms': elapsed_ms})}\n\n"
+                        print(chunk_str, end='', flush=True)
+                        yield f"event: message\ndata: {json.dumps({'message': chunk_str}, ensure_ascii=False)}\n\n"
                 print(f"\n[分析完成] 总字数: {len(response_text)}")
                 
                 # 保存助手响应到数据库
