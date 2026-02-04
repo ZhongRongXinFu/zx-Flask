@@ -22,6 +22,7 @@ from utils.ai.doubao import chat as doubao_chat
 from utils.ai.ai import validate_file_ext, validate_file_size
 from utils.ai.usage_tracker import AIUsageTracker
 from utils.login import login_required, op_required
+from utils.quota_logger import log_quota_change, get_quota_logs
 from settings import PRODUCT_IMAGE_DIR
 
 import pymysql
@@ -725,7 +726,7 @@ def continue_conversation(conversation_id):
             # try:
                 # 如果是分析类型的会话，扣除配额
                 if analysis_type:
-                    if not deduct_analysis_quota(user_id, analysis_type):
+                    if not deduct_analysis_quota(user_id, analysis_type, conversation_id):
                         yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': '配额扣除失败'})}\n\n"
                         return
                 
@@ -962,6 +963,17 @@ def ai_redeem_code_redeem():
                 return jsonify({"code": 400, "message": "兑换码尚未生效"}), 400
             if results["valid_to"] and now > results["valid_to"]:
                 return jsonify({"code": 400, "message": "兑换码已过期"}), 400
+            
+            # 获取用户当前额度和ID
+            cursor.execute("SELECT id, ai_quota FROM user WHERE uuid = %s", (user_uuid,))
+            user_info = cursor.fetchone()
+            if not user_info:
+                return jsonify({"code": 400, "message": "用户不存在"}), 400
+            
+            quota_before = user_info["ai_quota"]
+            quota_after = quota_before + results["amount"]
+            
+            # 更新用户额度
             sql = """
             UPDATE user
                 SET ai_quota = ai_quota + %s
@@ -984,6 +996,19 @@ def ai_redeem_code_redeem():
             )
             used_row = cursor.fetchone()
         connection.commit()
+        
+        # 记录额度变动日志
+        log_quota_change(
+            user_id=user_info["id"],
+            uuid=user_uuid,
+            change_type="redeem",
+            change_amount=results["amount"],
+            quota_before=quota_before,
+            quota_after=quota_after,
+            related_id=code,
+            remark=f"兑换码充值: {code}"
+        )
+        
         used_at = used_row["used_at"].strftime("%Y-%m-%d %H:%M:%S") if used_row and used_row["used_at"] else None
 
         return jsonify({
@@ -1548,13 +1573,14 @@ def check_analysis_quota(user_id: str, analysis_type: str) -> tuple:
         conn.close()
 
 
-def deduct_analysis_quota(user_id: str, analysis_type: str) -> bool:
+def deduct_analysis_quota(user_id: str, analysis_type: str, conversation_id: str = None) -> bool:
     """
     扣除用户分析配额
     
     Args:
-        user_id: 用户ID
+        user_id: 用户ID (uuid)
         analysis_type: 分析类型 (personal/company)
+        conversation_id: 会话ID（用于日志记录）
     
     Returns:
         bool: 是否扣除成功
@@ -1563,11 +1589,36 @@ def deduct_analysis_quota(user_id: str, analysis_type: str) -> bool:
     
     conn = connect()
     try:
-        with conn.cursor() as cursor:
+        with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+            # 先查询用户当前额度和ID
+            cursor.execute("SELECT id, ai_quota FROM user WHERE uuid = %s AND ai_quota >= %s", (user_id, quota_cost))
+            user_info = cursor.fetchone()
+            if not user_info:
+                return False
+            
+            quota_before = user_info["ai_quota"]
+            quota_after = quota_before - quota_cost
+            db_user_id = user_info["id"]
+            
+            # 扣除额度
             sql = "UPDATE user SET ai_quota = ai_quota - %s WHERE uuid = %s AND ai_quota >= %s"
             cursor.execute(sql, (quota_cost, user_id, quota_cost))
             conn.commit()
-            return cursor.rowcount > 0
+            
+            if cursor.rowcount > 0:
+                # 记录额度变动日志
+                log_quota_change(
+                    user_id=db_user_id,
+                    uuid=user_id,
+                    change_type="consume",
+                    change_amount=-quota_cost,
+                    quota_before=quota_before,
+                    quota_after=quota_after,
+                    related_id=conversation_id,
+                    remark=f"AI对话消耗({analysis_type}类型)"
+                )
+                return True
+            return False
     finally:
         conn.close()
 
@@ -1688,7 +1739,7 @@ def continue_analysis(conversation_id):
         def generate():
             try:
                 # 先扣除配额
-                if not deduct_analysis_quota(user_id, analysis_type):
+                if not deduct_analysis_quota(user_id, analysis_type, conversation_id):
                     yield f"event: error\ndata: {json.dumps({'status': 'error', 'message': '配额扣除失败'})}\n\n"
                     return
                 
@@ -1940,3 +1991,119 @@ def get_analysis_quota():
             })
     finally:
         conn.close()
+
+
+@ai_page.route("/quota/logs/", methods=["GET"])
+@login_required
+def get_user_quota_logs():
+    """获取用户的额度变动日志"""
+    user_uuid = g.current_user["uuid"]
+    
+    # 获取查询参数
+    change_type = request.args.get("change_type")  # redeem/consume/refund/admin/purchase
+    page = int(request.args.get("page", 1))
+    page_size = int(request.args.get("page_size", 50))
+    
+    # 限制最大页大小
+    if page_size > 200:
+        page_size = 200
+    
+    offset = (page - 1) * page_size
+    
+    try:
+        result = get_quota_logs(
+            uuid=user_uuid,
+            change_type=change_type,
+            limit=page_size,
+            offset=offset
+        )
+        
+        # 格式化变动类型的中文描述
+        type_map = {
+            "redeem": "兑换码充值",
+            "consume": "AI对话消耗",
+            "refund": "退款",
+            "admin": "管理员调整",
+            "purchase": "购买充值"
+        }
+        
+        for log in result["data"]:
+            log["change_type_text"] = type_map.get(log["change_type"], log["change_type"])
+            if log["created_at"]:
+                log["created_at"] = log["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+        
+        total_pages = (result["total"] + page_size - 1) // page_size
+        
+        return jsonify({
+            "code": 200,
+            "data": result["data"],
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": result["total"],
+                "total_pages": total_pages
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "message": f"查询失败: {str(e)}"
+        }), 500
+
+
+@ai_page.route("/quota/logs/all/", methods=["GET"])
+@login_required
+@op_required
+def get_all_quota_logs():
+    """获取所有用户的额度变动日志（管理员）"""
+    # 获取查询参数
+    uuid = request.args.get("uuid")  # 可选，筛选特定用户
+    change_type = request.args.get("change_type")  # 可选，筛选变动类型
+    page = int(request.args.get("page", 1))
+    page_size = int(request.args.get("page_size", 50))
+    
+    # 限制最大页大小
+    if page_size > 200:
+        page_size = 200
+    
+    offset = (page - 1) * page_size
+    
+    try:
+        result = get_quota_logs(
+            uuid=uuid,
+            change_type=change_type,
+            limit=page_size,
+            offset=offset
+        )
+        
+        # 格式化变动类型的中文描述
+        type_map = {
+            "redeem": "兑换码充值",
+            "consume": "AI对话消耗",
+            "refund": "退款",
+            "admin": "管理员调整",
+            "purchase": "购买充值"
+        }
+        
+        for log in result["data"]:
+            log["change_type_text"] = type_map.get(log["change_type"], log["change_type"])
+            if log["created_at"]:
+                log["created_at"] = log["created_at"].strftime("%Y-%m-%d %H:%M:%S")
+        
+        total_pages = (result["total"] + page_size - 1) // page_size
+        
+        return jsonify({
+            "code": 200,
+            "data": result["data"],
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": result["total"],
+                "total_pages": total_pages
+            }
+        })
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "message": f"查询失败: {str(e)}"
+        }), 500

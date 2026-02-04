@@ -90,7 +90,7 @@ def web_account_profile():
             "ai_quota": user["ai_quota"]
         }
     }
-    print(data)
+    # print(data)
     return jsonify(data), 200
 
 
@@ -139,7 +139,7 @@ def web_account_logout():
 @account_page.route("/login/manager/", methods=["POST"])
 def login_manager():
     openid = request.form.get("openid")
-    print(openid)
+    # print(openid)
     if not openid:
         return jsonify({"code": 400, "message": "缺少 openid 参数"}), 400
 

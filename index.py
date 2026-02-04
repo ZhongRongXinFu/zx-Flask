@@ -32,6 +32,7 @@ from pages.product import product_page
 from pages.dynamic_components import dynamic_components_page
 from pages.chat import chat_page
 from pages.upload import upload_page
+from pages.payment import payment_page
 app.register_blueprint(ai_page, url_prefix="/ai")
 app.register_blueprint(buy_page, url_prefix="/buy")
 app.register_blueprint(wechat_page, url_prefix="/wechat")
@@ -40,6 +41,7 @@ app.register_blueprint(product_page, url_prefix="/product")
 app.register_blueprint(dynamic_components_page, url_prefix="/dynamic_components")
 app.register_blueprint(chat_page, url_prefix="/chat")
 app.register_blueprint(upload_page, url_prefix="/upload")
+app.register_blueprint(payment_page, url_prefix='/payment')
 @app.route("/")
 def index():
     return jsonify({"code": 200,"message": "ZRXF server is running"})

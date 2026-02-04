@@ -8,9 +8,15 @@ DB_PORT = 3306
 
 WX_APP_ID = 'wx276d3b776e47c682'
 WX_APP_SECRET = '5654bdfd979bef4f4be46715f572f5ff'
-WX_API_URL = 'https://api.weixin.qq.com/sns/jscode2session'
+WX_OFFER_ID = '1450474385'
+WX_MIDAS_TOKEN = 'WDMNEYNnaLIEDABSBIDYNASODIBQWUEQ'  # 微信服务器验证token - 从微信公众平台获取
 WX_LOGIN_APP_ID = 'wx61848022937f1de5'
 WX_LOGIN_APP_SECRET = '6632cde4656f1f7a3af37092263a3564'
+WX_MIDAS_ENV = 1    # 0-正式环境 1-沙箱环境
+if (WX_MIDAS_ENV == 0):
+    WX_MIDAS_APP_KEY = 'cNxlxH50XD2iLcCZVNVOSQLK5Z1iFtcO'  # 正式key
+else:
+    WX_MIDAS_APP_KEY = 'M22ZpaULH7X8VivOMmh3Qc0g6SlKKnvs'  # 沙箱key
 
 
 AI_DEEPSEEK_API_KEY = "sk-cb536e5e448147d1b28c010b2ab8280f"

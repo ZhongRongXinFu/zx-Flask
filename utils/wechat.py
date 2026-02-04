@@ -1,5 +1,13 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import requests
-from settings import WX_APP_ID, WX_APP_SECRET, WX_API_URL
+import hmac
+import hashlib
+import json
+import time
+from settings import WX_APP_ID, WX_APP_SECRET, WX_MIDAS_APP_KEY
 
 def get_access_token():
     """获取微信access_token"""
@@ -7,8 +15,8 @@ def get_access_token():
     response = requests.get(url)
     return response.json().get("access_token")
 
-def get_openid(code):
-    """通过登录凭证获取openid和session_key"""
+def get_unionid(code):
+    """通过登录凭证获取unionid和session_key"""
     params = {
         "appid": WX_APP_ID,
         "secret": WX_APP_SECRET,
@@ -17,7 +25,7 @@ def get_openid(code):
     }
     
     try:
-        response = requests.get(WX_API_URL, params=params)
+        response = requests.get('https://api.weixin.qq.com/sns/jscode2session', params=params)
         result = response.json()
         
         if "errcode" in result:
@@ -33,6 +41,31 @@ def get_openid(code):
     except Exception as e:
         return { "code": -1, "message": "服务器内部错误" }
 
+def get_openid(code):
+    """通过登录凭证获取openid和session_key"""
+    params = {
+        "appid": WX_APP_ID,
+        "secret": WX_APP_SECRET,
+        "js_code": code,
+        "grant_type": "authorization_code"
+    }
+    
+    try:
+        response = requests.get('https://api.weixin.qq.com/sns/jscode2session', params=params)
+        result = response.json()
+        
+        if "errcode" in result:
+            return {
+                "code": result.get("errcode"),
+                "message": result.get("errmsg")
+            }
+        openid = result.get("openid")
+        session_key = result.get("session_key")
+        if not openid: return { "code": 0, "message": "未获取到openid" }
+        return { "code": 1, "openid": openid, "session_key": session_key }
+
+    except Exception as e:
+        return { "code": -1, "message": "服务器内部错误" }
 
 def get_phone_number(phone_code):
     """通过动态令牌获取用户手机号"""
@@ -58,3 +91,17 @@ def get_phone_number(phone_code):
         return { "code": 1, "phone": phone, "raw": phone_info }
     except Exception:
         return { "code": -1, "message": "服务器内部错误" }
+    
+def get_signature(sessionKey, signData):
+    signature = hmac.new(key = sessionKey.encode('utf-8'), msg = signData.encode('utf-8'),
+                       digestmod=hashlib.sha256).hexdigest()
+    return signature
+
+def get_paySig(sessionKey, uri, signData):
+    need_sign_msg = uri + '&' + signData
+    pay_sig = hmac.new(key = WX_MIDAS_APP_KEY.encode('utf-8'), msg = need_sign_msg.encode('utf-8'),
+                       digestmod=hashlib.sha256).hexdigest()
+    return pay_sig
+
+if __name__ == "__main__":
+    print(get_access_token())

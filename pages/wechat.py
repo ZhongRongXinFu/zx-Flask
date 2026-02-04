@@ -3,6 +3,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import uuid
+import hashlib
 from flask import Flask, Blueprint, Response, stream_with_context, request, jsonify
 from utils.token import *
 from utils.account import *
@@ -31,7 +32,7 @@ def wechat_login(f):
         case "miniprogram":
             if not code:
                 return jsonify({"code": 400, "message": "缺少 code 参数"}), 400
-            result = get_openid(code)
+            result = get_unionid(code)
             match result["code"]:
                 case 1:
                     openid, session_key = result["openid"], result["session_key"]
@@ -93,7 +94,7 @@ def wechat_register_init():
         return jsonify({"code": 400, "message": "缺少 phone_code 参数"}), 400
     
     # 获取openid
-    result = get_openid(code)
+    result = get_unionid(code)
     if result["code"] != 1:
         return jsonify({"code": 400, "message": "获取openid失败", "detail": result}), 400
 
@@ -163,3 +164,70 @@ def wechat_register_complete():
     result["message"] = "注册成功"
     
     return jsonify(result)
+
+@wechat_page.route("/webhook/", methods=["GET"])
+def wechat_webhook_verify():
+    """
+    微信服务器验证接口
+    
+    微信服务器会向此接口发送GET请求验证服务器的有效性
+    验证流程：
+    1. 将token、timestamp、nonce三个参数进行字典序排序
+    2. 将排序后的三个参数拼接成一个字符串
+    3. 进行SHA1签名计算
+    4. 与URL参数中的signature进行对比验证
+    5. 相等则验证通过，返回challenge参数；否则返回401
+    """
+    import hashlib
+    from settings import WX_MIDAS_TOKEN
+    
+    signature = request.args.get("signature")
+    timestamp = request.args.get("timestamp")
+    nonce = request.args.get("nonce")
+    challenge = request.args.get("echostr")  # 微信服务器验证时会发送echostr
+    
+    # 参数验证
+    if not all([signature, timestamp, nonce]):
+        return jsonify({
+            "code": 400,
+            "message": "缺少必要参数: signature, timestamp, nonce"
+        }), 400
+    
+    try:
+        # 1. 将token、timestamp、nonce进行字典序排序
+        params = sorted([WX_MIDAS_TOKEN, timestamp, nonce])
+        
+        # 2. 拼接排序后的字符串
+        concat_str = ''.join(params)
+        
+        # 3. 进行SHA1签名计算
+        sha1_hash = hashlib.sha1(concat_str.encode('utf-8')).hexdigest()
+        
+        # 4. 与URL参数中的signature进行对比
+        if sha1_hash == signature:
+            # 验证通过
+            # 如果是服务器验证请求（包含echostr），直接返回echostr
+            if challenge:
+                return challenge
+            
+            # 否则返回成功响应
+            return jsonify({
+                "code": 0,
+                "message": "验证通过"
+            }), 200
+        else:
+            # 验证失败
+            return jsonify({
+                "code": 401,
+                "message": "签名验证失败",
+                "debug": {
+                    "expected": sha1_hash,
+                    "received": signature
+                }
+            }), 401
+    
+    except Exception as e:
+        return jsonify({
+            "code": 500,
+            "message": f"验证过程出错: {str(e)}"
+        }), 500
