@@ -66,15 +66,16 @@ def handle_midas_payment_callback(msg_data):
             conn.close()
             return {"ErrCode": -1, "ErrMsg": f"订单不存在: {out_trade_no}"}
         
-        # 2. 验证订单状态（幂等性处理）
-        if order['status'] >= 2:
-            print(f"订单已处理，无需重复处理: {out_trade_no}, status={order['status']}")
+        # 2. 验证订单状态
+        user_id = order['user_id']
+        user_uuid = order['uuid']
+        
+        # 如果已经完全处理（状态=3），则幂等处理
+        if order['status'] >= 3:
+            print(f"订单已完全处理，无需重复处理: {out_trade_no}, status={order['status']}")
             cursor.close()
             conn.close()
             return {"ErrCode": 0, "ErrMsg": "success"}
-        
-        user_id = order['user_id']
-        user_uuid = order['uuid']
         
         # 3. 从ai_package表查询套餐信息（根据product_id）
         query_package = "SELECT quota_amount, price FROM ai_package WHERE package_id = %s AND is_active = 1"
@@ -94,23 +95,62 @@ def handle_midas_payment_callback(msg_data):
             print(f"UUID不匹配: 透传={attach}, 订单={user_uuid}")
             # 警告但不阻止，因为可能有特殊情况
         
-        # 5. 更新订单状态为"已支付"
-        update_order = """
-            UPDATE recharge_order 
-            SET status = 2, 
-                wx_order_id = %s, 
-                wx_transaction_id = %s, 
-                pay_time = FROM_UNIXTIME(%s), 
-                updated_at = NOW()
-            WHERE id = %s
+        # 5. 如果订单状态为0（待支付），先更新为已支付
+        if order['status'] == 0:
+            update_order = """
+                UPDATE recharge_order 
+                SET status = 2, 
+                    wx_order_id = %s, 
+                    wx_transaction_id = %s, 
+                    pay_time = FROM_UNIXTIME(%s), 
+                    updated_at = NOW()
+                WHERE id = %s
+            """
+            cursor.execute(update_order, (mch_order_no, transaction_id, paid_time, order['id']))
+            conn.commit()
+            print(f"订单状态已更新为已支付: {out_trade_no}")
+        elif order['status'] == 2:
+            # 订单已支付但未处理，更新支付信息
+            update_order = """
+                UPDATE recharge_order 
+                SET wx_order_id = %s, 
+                    wx_transaction_id = %s, 
+                    pay_time = FROM_UNIXTIME(%s), 
+                    updated_at = NOW()
+                WHERE id = %s
+            """
+            cursor.execute(update_order, (mch_order_no, transaction_id, paid_time, order['id']))
+            conn.commit()
+            print(f"订单支付信息已更新: {out_trade_no}")
+
+        # 6. 幂等保护：如果已存在额度日志，直接补齐订单完成状态
+        check_log_sql = """
+            SELECT id FROM ai_quota_log 
+            WHERE related_id = %s AND change_type = 'purchase' LIMIT 1
         """
-        cursor.execute(update_order, (mch_order_no, transaction_id, paid_time, order['id']))
-        conn.commit()
-        
-        print(f"订单状态已更新为已支付: {out_trade_no}")
-        
-        # 6. 增加用户AI额度
-        query_user = "SELECT quota FROM user WHERE id = %s"
+        cursor.execute(check_log_sql, (out_trade_no,))
+        existing_log = cursor.fetchone()
+        if existing_log:
+            if order.get('pay_time') is not None or order.get('status', 0) >= 2:
+                update_order_complete = """
+                    UPDATE recharge_order 
+                    SET status = 3, complete_time = COALESCE(complete_time, NOW()), updated_at = NOW()
+                    WHERE id = %s
+                """
+                cursor.execute(update_order_complete, (order['id'],))
+                conn.commit()
+                print(f"订单已记录额度日志，补齐完成时间: {out_trade_no}")
+                cursor.close()
+                conn.close()
+                return {"ErrCode": 0, "ErrMsg": "success"}
+            else:
+                print(f"订单未支付且无支付时间，保持完成时间为空: {out_trade_no}")
+                cursor.close()
+                conn.close()
+                return {"ErrCode": 0, "ErrMsg": "success"}
+
+        # 7. 增加用户AI额度
+        query_user = "SELECT ai_quota FROM user WHERE id = %s"
         cursor.execute(query_user, (user_id,))
         user = cursor.fetchone()
         
@@ -120,17 +160,17 @@ def handle_midas_payment_callback(msg_data):
             conn.close()
             return {"ErrCode": -1, "ErrMsg": f"用户不存在: {user_id}"}
         
-        current_quota = user.get('quota', 0)
+        current_quota = user.get('ai_quota', 0)
         new_quota = current_quota + quota_amount
         
         # 更新用户额度
-        update_quota = "UPDATE user SET quota = %s WHERE id = %s"
+        update_quota = "UPDATE user SET ai_quota = %s WHERE id = %s"
         cursor.execute(update_quota, (new_quota, user_id))
         conn.commit()
         
         print(f"用户额度已更新: {user_id}, {current_quota} → {new_quota} (+{quota_amount})")
         
-        # 7. 记录额度变动日志到ai_quota_log表
+        # 8. 记录额度变动日志到ai_quota_log表
         insert_log = """
             INSERT INTO ai_quota_log 
             (user_id, uuid, change_type, change_amount, quota_before, quota_after, related_id, remark, created_at)
@@ -151,7 +191,7 @@ def handle_midas_payment_callback(msg_data):
         
         print(f"额度日志已记录: {remark}")
         
-        # 8. 更新订单状态为"已完成"
+        # 9. 更新订单状态为"已完成"
         update_order_complete = """
             UPDATE recharge_order 
             SET status = 3, complete_time = NOW(), updated_at = NOW()
@@ -160,7 +200,7 @@ def handle_midas_payment_callback(msg_data):
         cursor.execute(update_order_complete, (order['id'],))
         conn.commit()
         
-        print(f"订单处理完成: {out_trade_no}")
+        print(f"✅ 订单处理完成: {out_trade_no}, 已增加额度 {quota_amount}，用户额度: {current_quota} → {new_quota}")
         
         cursor.close()
         conn.close()
