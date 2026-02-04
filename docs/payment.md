@@ -28,7 +28,7 @@
 -- 套餐表
 CREATE TABLE `ai_package` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
-  `package_name` VARCHAR(50) NOT NULL COMMENT '套餐名称',
+  `package_id` VARCHAR(50) NOT NULL COMMENT '套餐名称',
   `quota_amount` INT NOT NULL COMMENT '额度数量',
   `price` INT NOT NULL COMMENT '价格(分)',
   `description` VARCHAR(255) NULL COMMENT '描述',

@@ -4,13 +4,180 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import uuid
 import hashlib
+import json
+import time
 from flask import Flask, Blueprint, Response, stream_with_context, request, jsonify
 from utils.token import *
 from utils.account import *
 from utils.wechat import *
 from utils.account import account_check_phone_openid, account_create_temp, account_update_by_uuid
 from utils.login import login_required, op_required
+from utils.mysql import connect
+import pymysql
+
 wechat_page = Blueprint('wechat', __name__)
+
+
+def handle_midas_payment_callback(msg_data):
+    """
+    处理米大师支付回调
+    
+    Args:
+        msg_data: 完整的消息数据（xpay_goods_deliver_notify）
+        
+    Returns:
+        dict: {"ErrCode": 0, "ErrMsg": "success"} 或错误信息
+    """
+    try:
+        # 获取数据库连接
+        conn = connect()
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+        
+        # 提取消息字段
+        user_openid = msg_data.get("OpenId")
+        out_trade_no = msg_data.get("OutTradeNo")  # 业务订单号
+        env = msg_data.get("Env")  # 0-正式环境 1-沙箱环境
+        
+        # 提取微信支付信息
+        wechat_pay_info = msg_data.get("WeChatPayInfo", {})
+        mch_order_no = wechat_pay_info.get("MchOrderNo")  # 微信支付商户单号
+        transaction_id = wechat_pay_info.get("TransactionId")  # 微信支付订单号
+        paid_time = wechat_pay_info.get("PaidTime")  # 支付时间戳
+        
+        # 提取道具信息
+        goods_info = msg_data.get("GoodsInfo", {})
+        product_id = goods_info.get("ProductId")  # 道具ID（对应package_id）
+        quantity = goods_info.get("Quantity", 1)  # 购买数量
+        orig_price = goods_info.get("OrigPrice")  # 原始价格（分）
+        actual_price = goods_info.get("ActualPrice")  # 实际支付价格（分）
+        attach = goods_info.get("Attach")  # 透传信息（用户UUID）
+        
+        print(f"收到支付回调 - 订单号: {out_trade_no}, 道具ID: {product_id}, 用户: {user_openid}")
+        print(f"透传UUID: {attach}, 数量: {quantity}, 实付: {actual_price}分")
+        
+        # 1. 查询订单信息（使用业务订单号）
+        query_order = "SELECT * FROM recharge_order WHERE order_no = %s"
+        cursor.execute(query_order, (out_trade_no,))
+        order = cursor.fetchone()
+        
+        if not order:
+            print(f"订单不存在: {out_trade_no}")
+            cursor.close()
+            conn.close()
+            return {"ErrCode": -1, "ErrMsg": f"订单不存在: {out_trade_no}"}
+        
+        # 2. 验证订单状态（幂等性处理）
+        if order['status'] >= 2:
+            print(f"订单已处理，无需重复处理: {out_trade_no}, status={order['status']}")
+            cursor.close()
+            conn.close()
+            return {"ErrCode": 0, "ErrMsg": "success"}
+        
+        user_id = order['user_id']
+        user_uuid = order['uuid']
+        
+        # 3. 从ai_package表查询套餐信息（根据product_id）
+        query_package = "SELECT quota_amount, price FROM ai_package WHERE package_id = %s AND is_active = 1"
+        cursor.execute(query_package, (product_id,))
+        package = cursor.fetchone()
+        
+        if not package:
+            print(f"套餐不存在或已禁用: {product_id}")
+            cursor.close()
+            conn.close()
+            return {"ErrCode": -1, "ErrMsg": f"套餐不存在: {product_id}"}
+        
+        quota_amount = package['quota_amount'] * quantity  # 额度 × 数量
+        
+        # 4. 验证透传的UUID是否匹配
+        if attach and attach != user_uuid:
+            print(f"UUID不匹配: 透传={attach}, 订单={user_uuid}")
+            # 警告但不阻止，因为可能有特殊情况
+        
+        # 5. 更新订单状态为"已支付"
+        update_order = """
+            UPDATE recharge_order 
+            SET status = 2, 
+                wx_order_id = %s, 
+                wx_transaction_id = %s, 
+                pay_time = FROM_UNIXTIME(%s), 
+                updated_at = NOW()
+            WHERE id = %s
+        """
+        cursor.execute(update_order, (mch_order_no, transaction_id, paid_time, order['id']))
+        conn.commit()
+        
+        print(f"订单状态已更新为已支付: {out_trade_no}")
+        
+        # 6. 增加用户AI额度
+        query_user = "SELECT quota FROM user WHERE id = %s"
+        cursor.execute(query_user, (user_id,))
+        user = cursor.fetchone()
+        
+        if not user:
+            print(f"用户不存在: {user_id}")
+            cursor.close()
+            conn.close()
+            return {"ErrCode": -1, "ErrMsg": f"用户不存在: {user_id}"}
+        
+        current_quota = user.get('quota', 0)
+        new_quota = current_quota + quota_amount
+        
+        # 更新用户额度
+        update_quota = "UPDATE user SET quota = %s WHERE id = %s"
+        cursor.execute(update_quota, (new_quota, user_id))
+        conn.commit()
+        
+        print(f"用户额度已更新: {user_id}, {current_quota} → {new_quota} (+{quota_amount})")
+        
+        # 7. 记录额度变动日志到ai_quota_log表
+        insert_log = """
+            INSERT INTO ai_quota_log 
+            (user_id, uuid, change_type, change_amount, quota_before, quota_after, related_id, remark, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        """
+        remark = f"米大师充值 - 订单:{out_trade_no}, 道具:{product_id}, 数量:{quantity}, 实付:{actual_price/100:.2f}元"
+        cursor.execute(insert_log, (
+            user_id, 
+            user_uuid, 
+            'purchase', 
+            quota_amount, 
+            current_quota, 
+            new_quota, 
+            out_trade_no,
+            remark
+        ))
+        conn.commit()
+        
+        print(f"额度日志已记录: {remark}")
+        
+        # 8. 更新订单状态为"已完成"
+        update_order_complete = """
+            UPDATE recharge_order 
+            SET status = 3, complete_time = NOW(), updated_at = NOW()
+            WHERE id = %s
+        """
+        cursor.execute(update_order_complete, (order['id'],))
+        conn.commit()
+        
+        print(f"订单处理完成: {out_trade_no}")
+        
+        cursor.close()
+        conn.close()
+        
+        # 返回成功响应（微信要求的格式）
+        return {"ErrCode": 0, "ErrMsg": "success"}
+        
+    except pymysql.Error as db_error:
+        print(f"数据库错误: {str(db_error)}")
+        import traceback
+        traceback.print_exc()
+        return {"ErrCode": -1, "ErrMsg": f"数据库错误: {str(db_error)}"}
+    except Exception as e:
+        print(f"处理支付回调异常: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return {"ErrCode": -1, "ErrMsg": f"处理失败: {str(e)}"}
 
 @wechat_page.route("/", methods=["POST"])
 def index():
@@ -46,9 +213,9 @@ def wechat_login(f):
     
         
     info = account_exist(openid)
-    print(info)
+    # print(info)
     if not info["exists"]:
-        print("dhasbkjdabsdjkahsdkjasdkjsahdkasjhd")
+        # print("dhasbkjdabsdjkahsdkjasdkjsahdkasjhd")
         # 用户未注册，返回201提示需要注册
         return jsonify({
             "code": 201,
@@ -165,7 +332,7 @@ def wechat_register_complete():
     
     return jsonify(result)
 
-@wechat_page.route("/webhook/", methods=["GET"])
+@wechat_page.route("/webhook/verify/", methods=["GET"])
 def wechat_webhook_verify():
     """
     微信服务器验证接口
@@ -230,4 +397,166 @@ def wechat_webhook_verify():
         return jsonify({
             "code": 500,
             "message": f"验证过程出错: {str(e)}"
+        }), 500
+    
+@wechat_page.route("/webhook/", methods=["POST"])
+def wechat_webhook_handle():
+    """
+    微信消息接收和处理接口（安全模式）
+    
+    处理流程：
+    1. 验证msg_signature签名
+    2. 解密Encrypt消息
+    3. 验证appid
+    4. 处理消息
+    5. 加密回包
+    6. 生成回包签名
+    """
+    from settings import WX_MIDAS_TOKEN, WX_ENCODINGAESKEY, WX_APP_ID
+    from utils.wechat_crypt import WXBizMsgCrypt
+    import time
+    import json
+    
+    # 获取URL参数
+    msg_signature = request.args.get("msg_signature")
+    timestamp = request.args.get("timestamp")
+    nonce = request.args.get("nonce")
+    openid = request.args.get("openid")
+    
+    # 获取POST包体
+    data = request.get_json()
+    if not data:
+        return jsonify({"code": 400, "message": "无效的请求体"}), 400
+    
+    encrypt_msg = data.get("Encrypt")
+    to_username = data.get("ToUserName")
+    
+    # 参数验证
+    if not all([msg_signature, timestamp, nonce, encrypt_msg]):
+        return jsonify({
+            "code": 400,
+            "message": "缺少必要参数"
+        }), 400
+    
+    try:
+        # 初始化加密解密工具
+        crypt = WXBizMsgCrypt(
+            token=WX_MIDAS_TOKEN,
+            encoding_aes_key=WX_ENCODINGAESKEY,
+            appid=WX_APP_ID
+        )
+        
+        # 1. 验证msg_signature签名
+        if not crypt.verify_signature(msg_signature, timestamp, nonce, encrypt_msg):
+            return jsonify({
+                "code": 401,
+                "message": "签名验证失败，请求非法"
+            }), 401
+        
+        # 2. 解密消息
+        success, decrypted_msg, from_appid = crypt.decrypt(encrypt_msg)
+        
+        if not success:
+            return jsonify({
+                "code": 500,
+                "message": "消息解密失败"
+            }), 500
+        
+        # 3. 解析解密后的消息
+        msg_data = json.loads(decrypted_msg)
+        
+        print(f"收到微信消息: {msg_data}")
+        print(f"来自用户: {openid}")
+        
+        # 4. 处理不同类型的消息
+        msg_type = msg_data.get("MsgType")
+        event = msg_data.get("Event")
+        
+        if msg_type == "event":
+            match event:
+                case "xpay_goods_deliver_notify":
+                    # 米大师支付回调处理
+                    print("===== 处理米大师支付回调 =====")
+                    print(f"完整消息数据: {json.dumps(msg_data, ensure_ascii=False, indent=2)}")
+                    
+                    # 调用支付回调处理函数
+                    callback_result = handle_midas_payment_callback(msg_data)
+                    
+                    # 根据处理结果返回微信要求的格式
+                    if callback_result.get("ErrCode") == 0:
+                        print(f"✓ 支付回调处理成功: {msg_data.get('OutTradeNo')}")
+                        # 构造成功回包
+                        reply_msg = json.dumps({
+                            "ErrCode": 0,
+                            "ErrMsg": "success"
+                        })
+                    else:
+                        print(f"✗ 支付回调处理失败: {callback_result.get('ErrMsg')}")
+                        # 构造失败回包
+                        reply_msg = json.dumps({
+                            "ErrCode": callback_result.get("ErrCode", -1),
+                            "ErrMsg": callback_result.get("ErrMsg", "处理失败")
+                        })
+                    
+                    # 加密回包
+                    encrypted_reply = crypt.encrypt(reply_msg)
+                    if encrypted_reply:
+                        reply_timestamp = int(time.time())
+                        reply_signature = crypt.generate_signature(reply_timestamp, nonce, encrypted_reply)
+                        return jsonify({
+                            "Encrypt": encrypted_reply,
+                            "MsgSignature": reply_signature,
+                            "TimeStamp": reply_timestamp,
+                            "Nonce": nonce
+                        }), 200
+                    else:
+                        # 加密失败，返回纯文本JSON
+                        return jsonify(callback_result), 200
+
+                case "debug_demo":
+                    # 调试事件
+                    print(f"调试事件: {msg_data.get('debug_str')}")
+
+        
+        # 5. 构造回包
+        # 如果不需要特殊回包内容，返回success即可
+        reply_msg = "success"
+        
+        # 如果需要加密回包（根据消息类型决定）
+        # reply_msg = json.dumps({"demo_resp": "good luck"})
+        
+        # 6. 加密回包
+        encrypted_reply = crypt.encrypt(reply_msg)
+        
+        if not encrypted_reply:
+            # 加密失败，返回纯文本
+            return "success", 200
+        
+        # 7. 生成新的时间戳和签名
+        reply_timestamp = int(time.time())
+        reply_signature = crypt.generate_signature(reply_timestamp, nonce, encrypted_reply)
+        
+        # 8. 构造加密回包（JSON格式）
+        reply_data = {
+            "Encrypt": encrypted_reply,
+            "MsgSignature": reply_signature,
+            "TimeStamp": reply_timestamp,
+            "Nonce": nonce
+        }
+        
+        return jsonify(reply_data), 200
+        
+    except json.JSONDecodeError as e:
+        print(f"JSON解析失败: {str(e)}")
+        return jsonify({
+            "code": 400,
+            "message": "消息格式错误"
+        }), 400
+    except Exception as e:
+        print(f"处理消息失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "code": 500,
+            "message": f"处理失败: {str(e)}"
         }), 500

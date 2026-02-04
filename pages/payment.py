@@ -93,7 +93,7 @@ def midas_recharge_create():
             "productId": plan,
             "goodsPrice": package['price'],
             "outTradeNo": order_no,
-            "attach": "zhongxin_recharge",
+            "attach": user_uuid,
         }, separators=(',', ':'))
 
         signature = get_signature(session_key, signData)
