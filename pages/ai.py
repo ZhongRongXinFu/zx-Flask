@@ -3,6 +3,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import os
+import re  # Followup JSON parsing.
 import shutil
 import uuid
 import json
@@ -595,6 +596,48 @@ def extract_file_paths(file_objects: list) -> list:
     return [f["path"] if isinstance(f, dict) else f for f in file_objects]
 
 
+def _build_followup_prompt(user_prompt: str, assistant_reply: str) -> str:
+    # Keep output machine-parsable so the UI can render followups reliably.
+    instruction = "根据用户的消息和助手的回复，提出三个与用户消息语言一致的简短后续问题。仅输出一个字符串 JSON 数组。"
+
+    return f"{instruction}\n\nUser message:\n{user_prompt}\n\nAssistant reply:\n{assistant_reply}"
+
+
+def _parse_followups(raw_text: str) -> list:
+    # Parse strict JSON first, then fall back to a best-effort list.
+    if not raw_text:
+        return []
+    try:
+        data = json.loads(raw_text)
+        if isinstance(data, list):
+            return [str(item).strip() for item in data if str(item).strip()][:3]
+    except Exception:
+        pass
+
+    # Try to extract a JSON array from extra text.
+    match = re.search(r"\[[\s\S]*\]", raw_text)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            if isinstance(data, list):
+                return [str(item).strip() for item in data if str(item).strip()][:3]
+        except Exception:
+            pass
+
+    # Final fallback: split lines and trim bullets.
+    items = []
+    for line in raw_text.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        text = re.sub(r"^[\-\*\d\.\)\s]+", "", text).strip()
+        if text:
+            items.append(text)
+        if len(items) >= 3:
+            break
+    return items
+
+
 @ai_page.route("/chat/new/", methods=["POST"])
 @login_required
 def new_conversation():
@@ -796,9 +839,32 @@ def continue_conversation(conversation_id):
                         response_text += chunk_str
                         yield f"event: message\ndata: {json.dumps({'message': chunk_str}, ensure_ascii=False)}\n\n"
 
-                # 保存助手响应到数据库
-                messages.append({"role": "assistant", "content": response_text})
+                # Generate followups with the same model after the main reply is complete.
+                followups = []
+                try:
+                    followup_prompt = _build_followup_prompt(prompt, response_text)
+                    followup_messages = [{"role": "user", "content": followup_prompt}]
+                    followup_text = ""
+                    for fchunk in chat_func(messages=followup_messages, user_id=user_id, think=think, conversation_id=conversation_id):
+                        if isinstance(fchunk, dict):
+                            if fchunk.get("type") == "message":
+                                followup_text += fchunk.get("content", "")
+                        else:
+                            followup_text += str(fchunk)
+                    followups = _parse_followups(followup_text)
+                except Exception:
+                    followups = []
+
+                # Attach followups to the assistant message for persistence.
+                assistant_message = {"role": "assistant", "content": response_text}
+                if followups:
+                    assistant_message["followups"] = followups
+                messages.append(assistant_message)
                 update_conversation(conversation_id, messages, conversation_files)
+
+                # Emit a dedicated followups event before ending the stream.
+                if followups:
+                    yield f"event: followups\ndata: {json.dumps({'followups': followups}, ensure_ascii=False)}\n\n"
 
                 # 返回成功状态，如果是分析类型则包含配额消耗信息
                 end_data = {'status': 'completed'}
