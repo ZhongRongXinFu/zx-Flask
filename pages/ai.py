@@ -87,8 +87,28 @@ ANALYSIS_PROMPTS = {
 - 建议方案（Recommendations）
 - 实施计划（Implementation Plan）
 
-请确保分析专业、准确、可操作、具有战略意义。"""
+请确保分析专业、准确、可操作、具有战略意义。""",
+    "inquiry": """看看最近半年最后的查询部分，帮我统计一下，统计一下银行名称。那个查询只要帮我
+                查询是统计服务器上看贷款审批，法人代表负责人高管等资信审查
+                最近三个月统计一下，最近6个月也统计一下
+                只需要给结果不需要给注解"""
 }
+
+
+# 分析模式配置（统一维护可用模式与消耗点数）
+ANALYSIS_MODE_CONFIG = {
+    "personal": {"quota_cost": 1},
+    "company": {"quota_cost": 2},
+    "inquiry": {"quota_cost": 1},
+}
+
+
+def get_analysis_cost(analysis_type: str):
+    """根据分析类型获取消耗点数，不支持时返回 None"""
+    mode_config = ANALYSIS_MODE_CONFIG.get(analysis_type)
+    if not mode_config:
+        return None
+    return mode_config.get("quota_cost")
 
 
 def get_analysis_prompt(use_type: str, custom_instruction: str = "") -> str:
@@ -694,8 +714,10 @@ def continue_conversation(conversation_id):
     
     try:
         # 分析会话提前校验配额，不足直接返回 JSON 错误
-        quota_cost = 1 if analysis_type == "personal" else 2 if analysis_type else 0
+        quota_cost = get_analysis_cost(analysis_type) if analysis_type else 0
         if analysis_type:
+            if quota_cost is None:
+                return jsonify({"code": 400, "message": f"不支持的分析类型: {analysis_type}"})
             has_enough, current_quota = check_analysis_quota(user_id, analysis_type)
             if not has_enough:
                 def generate_quota_error():
@@ -845,7 +867,8 @@ def continue_conversation(conversation_id):
                     followup_prompt = _build_followup_prompt(prompt, response_text)
                     followup_messages = [{"role": "user", "content": followup_prompt}]
                     followup_text = ""
-                    for fchunk in chat_func(messages=followup_messages, user_id=user_id, think=think, conversation_id=conversation_id):
+                    followup_thinking = False
+                    for fchunk in chat_func(messages=followup_messages, user_id=user_id, think=followup_thinking, conversation_id=conversation_id):
                         if isinstance(fchunk, dict):
                             if fchunk.get("type") == "message":
                                 followup_text += fchunk.get("content", "")
@@ -1615,12 +1638,14 @@ def check_analysis_quota(user_id: str, analysis_type: str) -> tuple:
     
     Args:
         user_id: 用户ID
-        analysis_type: 分析类型 (personal/company)
+        analysis_type: 分析类型 (personal/company/inquiry)
     
     Returns:
         (has_enough, current_quota): 是否有足够的配额，当前配额值
     """
-    quota_cost = 1 if analysis_type == "personal" else 2
+    quota_cost = get_analysis_cost(analysis_type)
+    if quota_cost is None:
+        return False, 0
     
     conn = connect()
     try:
@@ -1645,13 +1670,15 @@ def deduct_analysis_quota(user_id: str, analysis_type: str, conversation_id: str
     
     Args:
         user_id: 用户ID (uuid)
-        analysis_type: 分析类型 (personal/company)
+        analysis_type: 分析类型 (personal/company/inquiry)
         conversation_id: 会话ID（用于日志记录）
     
     Returns:
         bool: 是否扣除成功
     """
-    quota_cost = 1 if analysis_type == "personal" else 2
+    quota_cost = get_analysis_cost(analysis_type)
+    if quota_cost is None:
+        return False
     
     conn = connect()
     try:
@@ -1697,12 +1724,13 @@ def new_analysis():
     user_id = g.current_user["uuid"]
     model = "doubao"  # 数据分析模型固定为豆包
     data = request.get_json() or {}
-    analysis_type = data.get("analysis_type", "personal")  # personal or company
+    analysis_type = data.get("analysis_type", "personal")
     title = data.get("title", "新分析")
     
-    # 验证参数
-    if analysis_type not in {"personal", "company"}:
-        return jsonify({"code": 400, "message": "不支持的分析类型，支持: personal, company"})
+    # 验证参数（分析模式由配置驱动）
+    if analysis_type not in ANALYSIS_MODE_CONFIG:
+        supported_types = ", ".join(ANALYSIS_MODE_CONFIG.keys())
+        return jsonify({"code": 400, "message": f"不支持的分析类型，支持: {supported_types}"})
     
     # 创建对话（使用 analysis_type）
     conversation = create_conversation(user_id, model, title, analysis_type)
@@ -1743,8 +1771,11 @@ def continue_analysis(conversation_id):
         return jsonify({"code": 400, "message": "这不是一个分析对话"})
     
     # 检查用户配额
+    quota_cost = get_analysis_cost(analysis_type)
+    if quota_cost is None:
+        return jsonify({"code": 400, "message": f"不支持的分析类型: {analysis_type}"})
+
     has_enough, current_quota = check_analysis_quota(user_id, analysis_type)
-    quota_cost = 1 if analysis_type == "personal" else 2
     
     if not has_enough:
         return jsonify({
@@ -1929,7 +1960,7 @@ def continue_analysis(conversation_id):
 def list_user_analyses():
     """列出用户的所有分析对话"""
     user_id = g.current_user["uuid"]
-    analysis_type = request.args.get("analysis_type")  # 可选：按分析类型筛选 (personal/company)
+    analysis_type = request.args.get("analysis_type")  # 可选：按分析类型筛选 (personal/company/inquiry)
     model = request.args.get("model")  # 可选：按模型筛选
     limit = int(request.args.get("limit", 50))
     offset = int(request.args.get("offset", 0))
@@ -2044,15 +2075,23 @@ def get_analysis_quota():
                 return jsonify({"code": 404, "message": "用户不存在"})
             
             ai_quota = result["ai_quota"]
-            
+
+            # 兼容旧字段，同时提供可扩展的模式配额结构
+            mode_costs = {mode: config["quota_cost"] for mode, config in ANALYSIS_MODE_CONFIG.items()}
+            can_do_modes = {mode: ai_quota >= cost for mode, cost in mode_costs.items()}
+
             return jsonify({
                 "code": 200,
                 "data": {
                     "current_quota": ai_quota,
-                    "personal_cost": 1,
-                    "company_cost": 2,
-                    "can_do_personal": ai_quota >= 1,
-                    "can_do_company": ai_quota >= 2
+                    "personal_cost": mode_costs.get("personal", 1),
+                    "company_cost": mode_costs.get("company", 2),
+                    "inquiry_cost": mode_costs.get("inquiry", 1),
+                    "can_do_personal": can_do_modes.get("personal", ai_quota >= 1),
+                    "can_do_company": can_do_modes.get("company", ai_quota >= 2),
+                    "can_do_inquiry": can_do_modes.get("inquiry", ai_quota >= 1),
+                    "mode_costs": mode_costs,
+                    "can_do_modes": can_do_modes
                 }
             })
     finally:
