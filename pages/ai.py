@@ -24,7 +24,7 @@ from utils.ai.ai import validate_file_ext, validate_file_size
 from utils.ai.usage_tracker import AIUsageTracker
 from utils.login import login_required, op_required
 from utils.quota_logger import log_quota_change, get_quota_logs
-from settings import PRODUCT_IMAGE_DIR
+from settings import PRODUCT_IMAGE_DIR, AI_QUOTA_DEDUCTION_ENABLED
 
 import pymysql
 import requests
@@ -1643,6 +1643,17 @@ def check_analysis_quota(user_id: str, analysis_type: str) -> tuple:
     Returns:
         (has_enough, current_quota): 是否有足够的配额，当前配额值
     """
+    if not AI_QUOTA_DEDUCTION_ENABLED:
+        conn = connect()
+        try:
+            with conn.cursor(pymysql.cursors.DictCursor) as cursor:
+                cursor.execute("SELECT ai_quota FROM user WHERE uuid = %s", (user_id,))
+                result = cursor.fetchone()
+                current_quota = result["ai_quota"] if result else 0
+                return True, current_quota
+        finally:
+            conn.close()
+
     quota_cost = get_analysis_cost(analysis_type)
     if quota_cost is None:
         return False, 0
@@ -1676,6 +1687,9 @@ def deduct_analysis_quota(user_id: str, analysis_type: str, conversation_id: str
     Returns:
         bool: 是否扣除成功
     """
+    if not AI_QUOTA_DEDUCTION_ENABLED:
+        return True
+
     quota_cost = get_analysis_cost(analysis_type)
     if quota_cost is None:
         return False

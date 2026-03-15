@@ -1,5 +1,8 @@
 DEBUG = True
 
+# 临时开关：关闭后，AI 分析不会校验额度不足，也不会扣减用户额度。
+AI_QUOTA_DEDUCTION_ENABLED = False
+
 DB_HOST = "localhost"
 DB_USER = "api"
 DB_PASSWORD = "cZ6aF0rO0gA0sF2fV5cC1cO0"
