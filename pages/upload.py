@@ -73,7 +73,11 @@ ALLOWED_EXTENSIONS = {
     # 图片
     'image': {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg', 'ico'},
     # 文档
-    'document': {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'csv'}
+    'document': {'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'md', 'csv'},
+    # 视频
+    'video': {'mp4', 'webm', 'mov', 'm4v'},
+    # 音频
+    'audio': {'mp3', 'wav', 'm4a', 'aac', 'ogg'},
 }
 
 # 最大文件大小（字节）

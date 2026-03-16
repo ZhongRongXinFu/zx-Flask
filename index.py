@@ -11,10 +11,18 @@ app.config['JSON_AS_ASCII'] = False
 app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024 * 1024  # 100MB
 
 if DEBUG:
-    # 允许跨域所有域名，并允许带 cookie
-    CORS(app, 
-        resources={r"/*": {"origins": "*"}}, 
-        supports_credentials=True
+    # 仅为本地前端联调开启 CORS，避免线上代理层与 Flask 重复写入响应头
+    CORS(
+        app,
+        resources={
+            r"/*": {
+                "origins": [
+                    "http://localhost:5173",
+                    "http://127.0.0.1:5173",
+                ]
+            }
+        },
+        supports_credentials=True,
     )
 
 def count_custom_routes(app):
