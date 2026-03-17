@@ -31,8 +31,15 @@ AI_TENCENT_SECRET_KEY = "Pm398FByb5UkrpcGl6QqaJwbGnAOgqri"
 AI_HUOSHAN_API_KEY = "6a401bfa-6e6f-44ad-a5b6-e09fe262f592" #company
 
 if DEBUG:
-    UPLOAD_FILE_DIR = "./static"
+    STATIC_FILE_DIR = "./static"
+    MEDIA_FILE_DIR = "./static/media"
 else:
-    UPLOAD_FILE_DIR = "/work/static"
+    STATIC_FILE_DIR = "/work/static"
+    MEDIA_FILE_DIR = "/work/static/media"
 
-PRODUCT_IMAGE_DIR  = "./static"
+STATIC_BASE_URL = "https://static.zhongrongxinfu.cn"
+MEDIA_BASE_URL = "https://media.zhongrongxinfu.cn"
+
+UPLOAD_FILE_DIR = STATIC_FILE_DIR
+
+PRODUCT_IMAGE_DIR = STATIC_FILE_DIR

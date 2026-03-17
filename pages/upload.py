@@ -8,12 +8,33 @@ import time
 import shutil
 from datetime import datetime, timezone
 from flask import Blueprint, request, jsonify, g
-from settings import UPLOAD_FILE_DIR
+from settings import (
+    UPLOAD_FILE_DIR,
+    STATIC_FILE_DIR,
+    STATIC_BASE_URL,
+    MEDIA_FILE_DIR,
+    MEDIA_BASE_URL,
+)
 from utils.login import login_required, op_required
 from utils.ai.pdfmaker import submit_convert, query_task, OFFICE_EXTS
 from utils.mysql import connect
 
 upload_page = Blueprint('upload', __name__)
+
+MEDIA_CATEGORIES = {"product_icon", "richtext", "product-media"}
+
+
+def _resolve_storage_target(category: str):
+    if category in MEDIA_CATEGORIES:
+        return os.path.expanduser(MEDIA_FILE_DIR), MEDIA_BASE_URL
+    return os.path.expanduser(STATIC_FILE_DIR), STATIC_BASE_URL
+
+
+def _resolve_base_dir_by_path(path: str):
+    top_level = path.split("/", 1)[0]
+    if top_level in MEDIA_CATEGORIES:
+        return os.path.expanduser(MEDIA_FILE_DIR)
+    return os.path.expanduser(UPLOAD_FILE_DIR)
 
 
 def _check_login_for_category(category: str):
@@ -114,7 +135,16 @@ def validate_file(file):
     return True, (file_type, ext)
 
 
-def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None, subsubcategory=None, use_filename=None):
+def _save_file_to_path(
+    file,
+    absolute_path,
+    base_dir,
+    base_url,
+    category,
+    subcategory=None,
+    subsubcategory=None,
+    use_filename=None,
+):
     """
     内部函数：保存文件到指定路径
     
@@ -243,7 +273,7 @@ def _save_file_to_path(file, absolute_path, base_dir, category, subcategory=None
         else:
             t = ""
 
-        public_url = f"https://static.zhongrongxinfu.cn/{url_path}{t}"
+        public_url = f"{base_url}/{url_path}{t}"
         
         return True, {
             "filename": original_filename if not is_converted else original_filename.rsplit('.', 1)[0] + '.pdf',
@@ -351,8 +381,17 @@ def upload_file():
     subsubcategory = request.form.get('subsubcategory')  # 可选的三级分类
     custom_filename = request.form.get('filename')  # 可选的自定义文件名
 
-    base_dir = os.path.expanduser(UPLOAD_FILE_DIR)
-    success, result = _save_file_to_path(file, None, base_dir, category, subcategory=subcategory, subsubcategory=subsubcategory, use_filename=custom_filename)
+    base_dir, base_url = _resolve_storage_target(category)
+    success, result = _save_file_to_path(
+        file,
+        None,
+        base_dir,
+        base_url,
+        category,
+        subcategory=subcategory,
+        subsubcategory=subsubcategory,
+        use_filename=custom_filename,
+    )
     
     if not success:
         return jsonify({"code": 400, "message": result}), 400
@@ -445,13 +484,22 @@ def upload_files_batch():
     
     success_list = []
     failed_list = []
-    base_dir = os.path.expanduser(UPLOAD_FILE_DIR)
+    base_dir, base_url = _resolve_storage_target(category)
     
     for idx, file in enumerate(files):
         # 获取该文件的自定义文件名（如果有）
         custom_filename = filenames.get(str(idx)) or filenames.get(idx)
         
-        success, result = _save_file_to_path(file, None, base_dir, category, subcategory=subcategory, subsubcategory=subsubcategory, use_filename=custom_filename)
+        success, result = _save_file_to_path(
+            file,
+            None,
+            base_dir,
+            base_url,
+            category,
+            subcategory=subcategory,
+            subsubcategory=subsubcategory,
+            use_filename=custom_filename,
+        )
         
         if success:
             success_list.append(result)
@@ -485,7 +533,9 @@ def get_upload_config():
             "allowed_extensions": ALLOWED_EXTENSIONS,
             "max_file_size": MAX_FILE_SIZE,
             "max_file_size_mb": MAX_FILE_SIZE / 1024 / 1024,
-            "base_url": "https://static.zhongrongxinfu.cn"
+            "base_url": STATIC_BASE_URL,
+            "media_base_url": MEDIA_BASE_URL,
+            "media_categories": sorted(MEDIA_CATEGORIES),
         }
     }), 200
 
@@ -548,6 +598,8 @@ def delete_file():
             "http://api.zhongrongxinfu.cn/",
             "https://static.zhongrongxinfu.cn/",
             "http://static.zhongrongxinfu.cn/",
+            "https://media.zhongrongxinfu.cn/",
+            "http://media.zhongrongxinfu.cn/",
         ):
             if path_no_query.startswith(prefix):
                 path_no_query = path_no_query[len(prefix):]
@@ -575,7 +627,7 @@ def delete_file():
     if '..' in path or path.startswith('/'):
         return jsonify({"code": 400, "message": "非法的路径"}), 400
     
-    base_dir = os.path.expanduser(UPLOAD_FILE_DIR)
+    base_dir = _resolve_base_dir_by_path(path)
     full_path = os.path.join(base_dir, path)
     
     # 确保解析后的路径仍在基目录内
