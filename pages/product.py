@@ -1,14 +1,128 @@
+import re
+import shutil
 import sys, uuid, os, pymysql
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from settings import PRODUCT_IMAGE_DIR
+from settings import MEDIA_FILE_DIR, MEDIA_BASE_URL, PRODUCT_IMAGE_DIR
 from datetime import datetime
 from flask import Flask, Blueprint, Response, stream_with_context, request, jsonify, g
 from utils.mysql import connect
 from utils.login import login_required, op_required
 
 product_page = Blueprint('product', __name__)
+
+RICH_TEXT_MEDIA_CATEGORIES = ("product-media", "richtext")
+RICH_TEXT_MEDIA_URL_RE = re.compile(
+    rf"""(?P<url>(?:https?://{re.escape(urlsplit(MEDIA_BASE_URL).netloc)}|/)(?:product-media|richtext)/[^"'<>)\[\]\s]+)""",
+    re.IGNORECASE,
+)
+
+
+def _extract_rich_text_media_paths(html: str):
+    if not html:
+        return set()
+
+    paths = set()
+    for match in RICH_TEXT_MEDIA_URL_RE.finditer(html):
+        candidate = match.group("url")
+        parsed = urlsplit(candidate)
+        path = unquote(parsed.path or "").lstrip("/")
+        if not path:
+            continue
+
+        segments = path.split("/")
+        if len(segments) < 2:
+            continue
+        if segments[0] not in RICH_TEXT_MEDIA_CATEGORIES:
+            continue
+
+        paths.add("/".join(segments))
+
+    return paths
+
+
+def _safe_media_absolute_path(relative_path: str):
+    media_root = os.path.realpath(os.path.expanduser(MEDIA_FILE_DIR))
+    absolute_path = os.path.realpath(os.path.join(media_root, relative_path))
+    if not absolute_path.startswith(media_root):
+        return None, media_root
+    return absolute_path, media_root
+
+
+def _prune_empty_media_dirs(start_path: str, stop_path: str):
+    current = os.path.dirname(start_path)
+    stop_path = os.path.realpath(stop_path)
+    while current.startswith(stop_path) and current != stop_path:
+        try:
+            if os.listdir(current):
+                break
+            os.rmdir(current)
+        except OSError:
+            break
+        current = os.path.dirname(current)
+
+
+def _delete_rich_text_media_paths(paths):
+    deleted = []
+    missing = []
+    skipped = []
+    failed = []
+
+    for relative_path in sorted(paths):
+        absolute_path, media_root = _safe_media_absolute_path(relative_path)
+        if not absolute_path:
+            skipped.append(relative_path)
+            continue
+
+        if not os.path.exists(absolute_path):
+            missing.append(relative_path)
+            continue
+
+        try:
+            os.remove(absolute_path)
+            _prune_empty_media_dirs(absolute_path, media_root)
+            deleted.append(relative_path)
+        except Exception as exc:
+            failed.append({"path": relative_path, "error": str(exc)})
+
+    return {
+        "deleted": deleted,
+        "missing": missing,
+        "skipped": skipped,
+        "failed": failed,
+    }
+
+
+def _delete_product_rich_text_media_tree(product_uuid: str):
+    deleted = []
+    missing = []
+    failed = []
+
+    for category in RICH_TEXT_MEDIA_CATEGORIES:
+        relative_dir = os.path.join(category, product_uuid)
+        absolute_dir, media_root = _safe_media_absolute_path(relative_dir)
+        if not absolute_dir:
+            failed.append({"path": relative_dir.replace("\\", "/"), "error": "invalid path"})
+            continue
+
+        if not os.path.exists(absolute_dir):
+            missing.append(relative_dir.replace("\\", "/"))
+            continue
+
+        try:
+            shutil.rmtree(absolute_dir)
+            _prune_empty_media_dirs(absolute_dir, media_root)
+            deleted.append(relative_dir.replace("\\", "/"))
+        except Exception as exc:
+            failed.append({"path": relative_dir.replace("\\", "/"), "error": str(exc)})
+
+    return {
+        "deleted_dirs": deleted,
+        "missing_dirs": missing,
+        "failed": failed,
+    }
 
 @product_page.route("/list/<f>/", methods=["GET", "POST"])
 def get_list(f):
@@ -341,7 +455,8 @@ def delete_product(product_uuid):
             sql = "DELETE FROM product WHERE uuid = %s"
             cursor.execute(sql, (product_uuid,))
         connection.commit()
-        return jsonify({ "code": 200, "message": "删除成功" })
+        cleanup = _delete_product_rich_text_media_tree(product_uuid)
+        return jsonify({ "code": 200, "message": "删除成功", "cleanup": cleanup })
     except Exception as e:
         return jsonify({ "code": 400, "message": f"删除失败: {str(e)}" })
     finally:
@@ -358,6 +473,12 @@ def edit_product_rich_text():
     connection = connect()
     try:
         with connection.cursor() as cursor:
+            cursor.execute("SELECT detail_html FROM product WHERE uuid=%s", (product_uuid,))
+            product = cursor.fetchone()
+            if not product:
+                return jsonify({"code": 404, "message": "商品不存在"}), 404
+
+            previous_html = product.get("detail_html") if isinstance(product, dict) else product[0]
             sql = """
                 UPDATE product SET
                 detail_html=%s
@@ -366,7 +487,12 @@ def edit_product_rich_text():
             cursor.execute(sql, (data, product_uuid))
             rows = cursor.fetchall()
         connection.commit()
-        return jsonify({ "code": 200, "data": rows }), 200
+        old_paths = _extract_rich_text_media_paths(previous_html)
+        new_paths = _extract_rich_text_media_paths(data)
+        cleanup = _delete_rich_text_media_paths(old_paths - new_paths)
+        cleanup["kept"] = sorted(new_paths)
+        cleanup["removed_count"] = len(cleanup["deleted"])
+        return jsonify({ "code": 200, "data": rows, "cleanup": cleanup }), 200
     except Exception as e:
         return jsonify({ "code": 400, "message": f"编辑失败: {str(e)}" }), 400
     finally:
