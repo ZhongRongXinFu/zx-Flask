@@ -28,13 +28,14 @@
 | f | string | URL路径 | 是 | 平台类型，可选值: `miniprogram`、`manager-component`、`manager` |
 | page | int | Query | 否 | 页码，从1开始，默认1 |
 | range | int | Query | 否 | 每页条数，1-500，默认10 |
-| sort_by | string | Query | 否 | 排序字段：`updated_at`、`created_at`、`price`、`is_online`、`name`，默认 `updated_at` |
+| sort_by | string | Query | 否 | 排序字段：`updated_at`、`created_at`、`price`、`is_online`、`is_home_visible`、`name`，默认 `updated_at` |
 | order | string | Query | 否 | 排序方向：`asc` / `desc`，默认 `desc` |
 | name | string | Query | 否 | 按产品名称模糊搜索 |
 | tag | string | Query | 否 | 按标签模糊搜索 |
 | manager | string | Query | 否 | 按产品经理模糊搜索 |
 | department | string | Query | 否 | 按部门模糊搜索 |
 | is_online | int | Query | 否 | 是否上线：`0`/`1`（`miniprogram` 和 `manager-component` 固定在线） |
+| is_home_visible | int | Query | 否 | 是否在小程序首页产品列表展示：`0`/`1`；`manager` 支持按该字段筛选，`miniprogram` 固定为 `1` |
 | price | number | Query | 否 | 价格精确匹配 |
 | price_min | number | Query | 否 | 价格下限 |
 | price_max | number | Query | 否 | 价格上限 |
@@ -44,7 +45,7 @@
 | updated_end | datetime | Query | 否 | 更新时间止，格式 `YYYY-MM-DD HH:MM:SS` |
 
 **平台说明**:
-- `miniprogram`: 小程序端展示，仅返回在线产品的简要信息
+- `miniprogram`: 小程序首页产品列表，仅返回 `is_online=1` 且 `is_home_visible=1` 的产品
 - `manager-component`: 管理后台组件展示，返回在线产品的完整信息
 - `manager`: 管理后台，返回所有产品（包含离线）
 
@@ -59,6 +60,10 @@ curl -X GET "http://localhost:8000/product/list/manager/?page=2&range=20&sort_by
 dy
 # 管理后台组件：筛选在线 + 按标签模糊 + 价格区间
 curl -X GET "http://localhost:8000/product/list/manager-component/?tag=AI&price_min=100&price_max=999" \
+  -H "Authorization: Bearer <admin_token>"
+
+# 管理后台列表：按首页展示状态筛选
+curl -X GET "http://localhost:8000/product/list/manager/?is_home_visible=0" \
   -H "Authorization: Bearer <admin_token>"
 
 # 按经理和部门模糊搜索，限定创建时间范围
@@ -81,6 +86,8 @@ curl -X GET "http://localhost:8000/product/list/manager/?manager=张&department=
       "tag": "标签",
       "slogan": "产品标语",
       "price": "9999.99",
+      "is_online": 1,
+      "is_home_visible": 1,
       "bank_name": "中国银行",
       "reference_rate": "年利率4%-6%",
       "loan_amount": "10-1000万",
@@ -117,6 +124,7 @@ curl -X GET "http://localhost:8000/product/list/manager/?manager=张&department=
       "slogan": "产品标语",
       "price": "9999.99",
       "is_online": 1,
+      "is_home_visible": 1,
       "manager": "张三",
       "department": "产品部",
       "description": "产品描述",
@@ -169,6 +177,7 @@ curl -X GET "http://localhost:8000/product/list/manager/?manager=张&department=
 | slogan | string | 是 | 产品标语 |
 | price | string | 是 | 产品价格 |
 | is_online | int | 是 | 是否上线（0=否，1=是） |
+| is_home_visible | int | 否 | 是否在小程序首页产品列表展示，默认 `1` |
 | logo | string | 是 | Logo图片URL |
 | manager | string | 否 | 产品经理名称 |
 | department | string | 否 | 所属部门 |
@@ -195,6 +204,7 @@ curl -X POST http://localhost:8000/product/new/ \
   -d "slogan=高效率工作助手" \
   -d "price=9999" \
   -d "is_online=1" \
+  -d "is_home_visible=1" \
   -d "manager=张三" \
   -d "department=产品部" \
   -d "description=这是一个产品" \
@@ -250,6 +260,7 @@ curl -X POST http://localhost:8000/product/new/ \
 | slogan | string | 是 | 产品标语 |
 | price | string | 是 | 产品价格 |
 | is_online | int | 是 | 是否上线（0=否，1=是） |
+| is_home_visible | int | 否 | 是否在小程序首页产品列表展示，默认 `1` |
 | logo | string | 是 | Logo图片URL |
 | manager | string | 否 | 产品经理名称 |
 | department | string | 否 | 所属部门 |
@@ -278,6 +289,7 @@ curl -X POST http://localhost:8000/product/update/ \
   -d "slogan=新标语" \
   -d "price=8888" \
   -d "is_online=1" \
+  -d "is_home_visible=0" \
   -d "logo=http://192.168.196.47:8000/static/logo/new_logo.jpg" \
   -d "manager=李四" \
   -d "department=市场部" \
@@ -348,6 +360,7 @@ curl -X GET http://localhost:8000/product/info/550e8400-e29b-41d4-a716-446655440
     "slogan": "产品标语",
     "price": "9999.99",
     "is_online": 1,
+    "is_home_visible": 1,
     "manager": "张三",
     "department": "产品部",
     "description": "产品描述",
@@ -666,6 +679,7 @@ curl -X POST http://localhost:8000/dynamic_components/update/ \
 | slogan | string | 产品标语 |
 | price | string | 产品价格 |
 | is_online | int | 是否上线（0=否，1=是） |
+| is_home_visible | int | 是否在小程序首页产品列表展示（0=否，1=是），默认 `1` |
 | manager | string | 产品经理名称 |
 | department | string | 所属部门 |
 | description | string | 产品描述 |
@@ -701,6 +715,7 @@ curl -X POST http://localhost:8000/dynamic_components/update/ \
 
 | 版本 | 日期 | 更新说明 |
 |------|------|--------|
+| 1.3 | 2026-03-25 | 为产品表新增 `is_home_visible` 字段，支持管理后台筛选，并将小程序首页列表过滤调整为 `is_online=1` 且 `is_home_visible=1` |
 | 1.2 | 2026-01-20 | 修改创建和更新产品接口，logo从文件上传改为URL传递 |
 | 1.1 | 2026-01-20 | 为产品表新增13个字段：银行名称、参考利率、贷款额度、贷款期限、还款方式、担保方式、审批模式、使用对象、所属机构、服务区域、产品特色 |
 | 1.0 | 2026-01-17 | 初始版本，包含7个产品接口和2个动态组件接口 |

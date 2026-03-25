@@ -12,12 +12,35 @@ from utils.mysql import connect
 from utils.login import login_required, op_required
 
 product_page = Blueprint('product', __name__)
+HOME_VISIBLE_DEFAULT = 1
 
 RICH_TEXT_MEDIA_CATEGORIES = ("product-media", "richtext")
 RICH_TEXT_MEDIA_URL_RE = re.compile(
     rf"""(?P<url>(?:https?://{re.escape(urlsplit(MEDIA_BASE_URL).netloc)}|/)(?:product-media|richtext)/[^"'<>)\[\]\s]+)""",
     re.IGNORECASE,
 )
+
+
+def _normalize_flag(value, *, default=None, field_name="flag"):
+    if value is None or value == "":
+        return default
+
+    if isinstance(value, bool):
+        return int(value)
+
+    if isinstance(value, int):
+        if value in (0, 1):
+            return value
+        raise ValueError(f"{field_name} must be 0 or 1")
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("0", "1"):
+            return int(normalized)
+        if normalized in ("true", "false"):
+            return 1 if normalized == "true" else 0
+
+    raise ValueError(f"{field_name} must be 0 or 1")
 
 
 def _extract_rich_text_media_paths(html: str):
@@ -140,6 +163,7 @@ def get_list(f):
     manager = request.args.get("manager", type=str)
     department = request.args.get("department", type=str)
     is_online_filter = request.args.get("is_online", type=int)
+    is_home_visible_filter = request.args.get("is_home_visible", type=int)
     price = request.args.get("price", type=float)
     price_min = request.args.get("price_min", type=float)
     price_max = request.args.get("price_max", type=float)
@@ -158,6 +182,7 @@ def get_list(f):
         "created_at": "created_at",
         "price": "price",
         "is_online": "is_online",
+        "is_home_visible": "is_home_visible",
         "name": "name"
     }
     if sort_by not in allowed_sort_fields:
@@ -169,11 +194,12 @@ def get_list(f):
 
     # 不同平台的列和基础过滤
     base_where = []
-    columns_miniprogram = "id, uuid, name, logo, tag, slogan, price, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features"
-    columns_manager = "id, uuid, name, logo, tag, slogan, price, is_online, manager, department, description, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features, created_at, updated_at"
+    columns_miniprogram = "id, uuid, name, logo, tag, slogan, price, is_online, is_home_visible, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features"
+    columns_manager = "id, uuid, name, logo, tag, slogan, price, is_online, is_home_visible, manager, department, description, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features, created_at, updated_at"
 
     if f == "miniprogram":
         base_where.append("is_online = 1")
+        base_where.append("is_home_visible = 1")
         select_columns = columns_miniprogram
     elif f == "manager-component":
         base_where.append("is_online = 1")
@@ -201,6 +227,9 @@ def get_list(f):
     if is_online_filter in (0, 1):
         where_clauses.append("is_online = %s")
         params.append(is_online_filter)
+    if f == "manager" and is_home_visible_filter in (0, 1):
+        where_clauses.append("is_home_visible = %s")
+        params.append(is_home_visible_filter)
 
     if price is not None:
         where_clauses.append("price = %s")
@@ -281,7 +310,15 @@ def create_product():
     tag = data.get("tag")
     slogan = data.get("slogan")
     price = data.get("price")
-    is_online = data.get("is_online")
+    try:
+        is_online = _normalize_flag(data.get("is_online"), field_name="is_online")
+        is_home_visible = _normalize_flag(
+            data.get("is_home_visible"),
+            default=HOME_VISIBLE_DEFAULT,
+            field_name="is_home_visible",
+        )
+    except ValueError as exc:
+        return jsonify({"code": 400, "message": str(exc)})
     manager = data.get("manager")
     department = data.get("department")
     description = data.get("description")
@@ -308,11 +345,11 @@ def create_product():
         with connection.cursor() as cursor:
             sql = """
                 INSERT INTO product
-                (name, tag, slogan, price, is_online, manager, department, description, logo, uuid, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (name, tag, slogan, price, is_online, is_home_visible, manager, department, description, logo, uuid, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
 
-            cursor.execute(sql, (name, tag, slogan, price, is_online, manager, department, description, logo, product_uuid, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features))
+            cursor.execute(sql, (name, tag, slogan, price, is_online, is_home_visible, manager, department, description, logo, product_uuid, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features))
             rows = cursor.fetchall()
         connection.commit()
         return jsonify({ "code": 200, "data": rows })
@@ -331,7 +368,15 @@ def update_product():
     tag = data.get("tag")
     slogan = data.get("slogan")
     price = data.get("price")
-    is_online = data.get("is_online")
+    try:
+        is_online = _normalize_flag(data.get("is_online"), field_name="is_online")
+        is_home_visible = _normalize_flag(
+            data.get("is_home_visible"),
+            default=HOME_VISIBLE_DEFAULT,
+            field_name="is_home_visible",
+        )
+    except ValueError as exc:
+        return jsonify({"code": 400, "message": str(exc)})
     manager = data.get("manager")
     department = data.get("department")
     description = data.get("description")
@@ -376,6 +421,7 @@ def update_product():
                 slogan=%s,
                 price=%s,
                 is_online=%s,
+                is_home_visible=%s,
                 manager=%s,
                 department=%s,
                 description=%s,
@@ -393,7 +439,7 @@ def update_product():
                 product_features=%s
                 WHERE uuid=%s
             """
-            cursor.execute(sql, (name, tag, slogan, price, is_online, manager, department, description, logo, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features, product_uuid))
+            cursor.execute(sql, (name, tag, slogan, price, is_online, is_home_visible, manager, department, description, logo, bank_name, reference_rate, loan_amount, loan_term, repayment_method, guarantee_method, approval_mode, usage_target, organization, service_area, product_features, product_uuid))
             rows = cursor.fetchall()
         connection.commit()
         return jsonify({ "code": 200, "data": rows })
@@ -417,6 +463,7 @@ def info_product(product_uuid):
                 slogan,
                 price,
                 is_online,
+                is_home_visible,
                 manager,
                 department,
                 description,
