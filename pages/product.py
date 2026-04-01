@@ -199,7 +199,9 @@ def get_list(f):
 
     if f == "miniprogram":
         base_where.append("is_online = 1")
-        base_where.append("is_home_visible = 1")
+        # 有搜索关键词时从全量产品池搜索，不限制 is_home_visible
+        if not name:
+            base_where.append("is_home_visible = 1")
         select_columns = columns_miniprogram
     elif f == "manager-component":
         base_where.append("is_online = 1")
