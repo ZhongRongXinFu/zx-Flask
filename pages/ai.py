@@ -37,13 +37,9 @@ ai_page = Blueprint('ai', __name__)
 
 def get_remote_file_size(url: str) -> int:
     """
-    通过HEAD请求获取远程文件的大小（bytes）
-    
-    Args:
-        url: 文件URL
-    
-    Returns:
-        文件大小（bytes），如果获取失败返回 -1
+    获取远程文件大小（bytes）。
+    先用 HEAD 请求，拿不到 Content-Length 则用 GET Range 兜底。
+    获取失败返回 -1。
     """
     try:
         response = requests.head(url, timeout=10, allow_redirects=True)
@@ -51,9 +47,27 @@ def get_remote_file_size(url: str) -> int:
             content_length = response.headers.get('content-length')
             if content_length:
                 return int(content_length)
-        return -1
     except Exception:
-        return -1
+        pass
+
+    # 兜底：GET Range 请求，从 Content-Range 读总大小
+    try:
+        response = requests.get(url, headers={"Range": "bytes=0-0"}, timeout=10, allow_redirects=True, stream=True)
+        response.close()
+        # 格式: "bytes 0-0/12345678"
+        content_range = response.headers.get('content-range', '')
+        if content_range and '/' in content_range:
+            total = content_range.split('/')[-1]
+            if total.isdigit():
+                return int(total)
+        # 部分服务器不支持 Range，直接返回完整 Content-Length
+        content_length = response.headers.get('content-length')
+        if content_length:
+            return int(content_length)
+    except Exception:
+        pass
+
+    return -1
 
 
 # 固定分析提示词
@@ -432,17 +446,18 @@ def delete_all_conversations():
         })
 
 
-def validate_and_prepare_files(file_urls=None, file_names=None, conversation_id=None):
+def validate_and_prepare_files(file_urls=None, file_names=None, conversation_id=None, file_sizes=None):
     """
     验证并准备URL文件列表（仅支持公网URL）
-    
+
     参数：
         file_urls: 公网URL列表
         file_names: 对应的文件原名列表（必须与file_urls一一对应）
         conversation_id: 对话ID
-    
+        file_sizes: 对应的文件大小列表（bytes，前端上传时已知，优先使用）
+
     仅支持 PDF 和图片文件
-    
+
     返回格式：[
         {"type": "image_url", "url": "https://...jpg", "original_name": "photo.jpg"},
         {"type": "file_url", "url": "https://...pdf", "original_name": "report.pdf"}
@@ -451,25 +466,31 @@ def validate_and_prepare_files(file_urls=None, file_names=None, conversation_id=
     ALLOWED_IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
     ALLOWED_PDF_EXTS = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.md', '.csv'}
     ALLOWED_ALL = ALLOWED_IMAGE_EXTS | ALLOWED_PDF_EXTS
-    
+
     result = []
-    
+
     # 处理公网URL
     if file_urls:
         # 确保file_urls是列表
         if isinstance(file_urls, str):
             file_urls = [file_urls]
-        
+
         # 确保file_names是列表且与file_urls长度相同
         if file_names is None:
             file_names = [None] * len(file_urls)
         elif isinstance(file_names, str):
             file_names = [file_names]
-        
+
         if len(file_names) != len(file_urls):
             raise ValueError(f"文件名列表长度({len(file_names)})与URL列表长度({len(file_urls)})不匹配")
-        
-        for url, original_name in zip(file_urls, file_names):
+
+        # 标准化 file_sizes，长度对齐
+        if file_sizes and isinstance(file_sizes, list) and len(file_sizes) == len(file_urls):
+            _sizes = [int(s) if s else -1 for s in file_sizes]
+        else:
+            _sizes = [-1] * len(file_urls)
+
+        for url, original_name, provided_size in zip(file_urls, file_names, _sizes):
             if not url or not isinstance(url, str):
                 continue
             
@@ -499,9 +520,11 @@ def validate_and_prepare_files(file_urls=None, file_names=None, conversation_id=
             if original_ext not in ALLOWED_ALL:
                 raise ValueError(f"文件 {display_name}: 仅支持 PDF 和图片文件 (.pdf, .jpg, .jpeg, .png, .gif, .bmp, .webp)")
             
+            # 优先使用前端传来的大小，否则 HEAD 请求兜底
+            file_size = provided_size if provided_size > 0 else get_remote_file_size(url)
+
             # 根据类型生成对应的格式
             if original_ext in ALLOWED_IMAGE_EXTS:
-                file_size = get_remote_file_size(url)
                 result.append({
                     "type": "image_url",
                     "url": url,
@@ -509,7 +532,6 @@ def validate_and_prepare_files(file_urls=None, file_names=None, conversation_id=
                     "size": file_size
                 })
             elif original_ext in ALLOWED_PDF_EXTS:
-                file_size = get_remote_file_size(url)
                 result.append({
                     "type": "file_url",
                     "url": url,
@@ -534,6 +556,7 @@ def _resolve_large_pdfs(file_objects: list) -> tuple:
     injected_parts = []
 
     for obj in file_objects:
+        print(f"[LAS DEBUG] type={obj.get('type')} name={obj.get('original_name')} size={obj.get('size', -1)}")
         is_large_pdf = (
             obj.get("type") == "file_url"
             and os.path.splitext(obj.get("original_name", ""))[1].lower() == ".pdf"
@@ -541,6 +564,7 @@ def _resolve_large_pdfs(file_objects: list) -> tuple:
         )
         if is_large_pdf:
             try:
+                print(f"[LAS PDF] 开始解析: {obj['url']}")
                 markdown = parse_pdf_to_markdown(obj["url"], AI_LAS_API_KEY)
                 injected_parts.append(f"【文件内容 - {obj['original_name']}】\n{markdown}\n---")
                 print(f"[LAS PDF] 解析成功: {obj['original_name']} ({obj.get('size', 0) // 1024 // 1024}MB)")
@@ -769,15 +793,16 @@ def continue_conversation(conversation_id):
         # 仅支持公网URL
         file_urls = data.get("file_urls") or []
         file_names = data.get("file_names") or []
-        
+        file_sizes = data.get("file_sizes") or []
+
         # 确保是列表
         if isinstance(file_urls, str):
             file_urls = [file_urls]
         if isinstance(file_names, str):
             file_names = [file_names]
-        
+
         # 验证并准备新的文件
-        new_file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id)
+        new_file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id, file_sizes)
         
         # 转换为数据库格式，保留原始文件名和文件大小便于审计
         new_db_files = []
@@ -829,29 +854,30 @@ def continue_conversation(conversation_id):
                         user_message = {"role": "user", "content": "\n".join([d for d in desc if d]), "files": new_db_files}
                     else:
                         resolved_files, injected_text = _resolve_large_pdfs(new_file_objects)
-                        content = []
+                        # 构建发给 AI 的内容（含注入 markdown）
+                        ai_content = []
+                        store_content = []
                         for file_obj in resolved_files:
                             if file_obj.get("type") == "image_url":
-                                content.append({
-                                    "type": "image_url",
-                                    "image_url": {
-                                        "url": file_obj.get("url")
-                                    }
-                                })
+                                block = {"type": "image_url", "image_url": {"url": file_obj.get("url")}}
+                                ai_content.append(block)
+                                store_content.append(block)
                             elif file_obj.get("type") == "file_url":
-                                content.append({
-                                    "type": "file_url",
-                                    "file_url": {
-                                        "url": file_obj.get("url")
-                                    }
-                                })
-                        final_text = (injected_text + "\n\n" + prompt).strip() if injected_text else prompt
-                        content.append({"type": "text", "text": final_text})
-                        user_message = {"role": "user", "content": content, "files": new_db_files}
+                                block = {"type": "file_url", "file_url": {"url": file_obj.get("url")}}
+                                ai_content.append(block)
+                                store_content.append(block)
+                        ai_content.append({"type": "text", "text": (injected_text + "\n\n" + prompt).strip() if injected_text else prompt})
+                        store_content.append({"type": "text", "text": prompt})
+                        # ai_user_message 仅用于本次 AI 调用，不存 DB
+                        ai_user_message = {"role": "user", "content": ai_content, "files": new_db_files}
+                        user_message = {"role": "user", "content": store_content, "files": new_db_files}
                 else:
-                    user_message = {"role": "user", "content": prompt}
-                
+                    ai_user_message = {"role": "user", "content": prompt}
+                    user_message = ai_user_message
+
+                # messages 存干净版本（存 DB 用），ai_messages 含注入内容（发给 AI 用）
                 messages.append(user_message)
+                ai_messages = messages[:-1] + [ai_user_message]
 
                 # 调用对应的 AI 模型
                 if model == "deepseek":
@@ -864,7 +890,7 @@ def continue_conversation(conversation_id):
 
                 response_text = ""
                 # 不通过 files 参数，因为文件已在 messages 中
-                for chunk in chat_func(messages=messages, user_id=user_id, think=think, conversation_id=conversation_id):
+                for chunk in chat_func(messages=ai_messages, user_id=user_id, think=think, conversation_id=conversation_id):
                     # 处理字典格式（包含 type 和 content）
                     if isinstance(chunk, dict):
                         chunk_type = chunk.get("type", "message")
@@ -1831,15 +1857,16 @@ def continue_analysis(conversation_id):
         # 仅支持公网URL
         file_urls = data.get("file_urls") or []
         file_names = data.get("file_names") or []
-        
+        file_sizes = data.get("file_sizes") or []
+
         # 确保是列表
         if isinstance(file_urls, str):
             file_urls = [file_urls]
         if isinstance(file_names, str):
             file_names = [file_names]
-        
+
         # 验证并准备新文件
-        new_file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id)
+        new_file_objects = validate_and_prepare_files(file_urls, file_names, conversation_id, file_sizes)
         
         # 转换为数据库格式，保留原始文件名和文件大小便于审计
         new_db_files = []
@@ -1883,59 +1910,54 @@ def continue_analysis(conversation_id):
                 if new_file_objects:
                     # 多模态内容：包含文件URL和文本提示
                     resolved_files, injected_text = _resolve_large_pdfs(new_file_objects)
-                    content = []
+                    ai_content = []
+                    store_content = []
 
-                    # 添加文件内容 - 支持图片和文档URL
                     for file_obj in resolved_files:
                         if file_obj.get("type") == "image_url":
-                            content.append({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": file_obj.get("url")
-                                }
-                            })
+                            block = {"type": "image_url", "image_url": {"url": file_obj.get("url")}}
+                            ai_content.append(block)
+                            store_content.append(block)
                         elif file_obj.get("type") == "file_url":
-                            content.append({
-                                "type": "file_url",
-                                "file_url": {
-                                    "url": file_obj.get("url")
-                                }
-                            })
+                            block = {"type": "file_url", "file_url": {"url": file_obj.get("url")}}
+                            ai_content.append(block)
+                            store_content.append(block)
 
-                    # 添加文本提示
-                    final_text = (injected_text + "\n\n" + prompt).strip() if injected_text else prompt
-                    content.append({
-                        "type": "text",
-                        "text": final_text
-                    })
+                    ai_content.append({"type": "text", "text": (injected_text + "\n\n" + prompt).strip() if injected_text else prompt})
+                    store_content.append({"type": "text", "text": prompt})
 
-                    user_message = {"role": "user", "content": content, "files": new_db_files}
+                    # ai_user_message 仅用于本次 AI 调用，不存 DB
+                    ai_user_message = {"role": "user", "content": ai_content, "files": new_db_files}
+                    user_message = {"role": "user", "content": store_content, "files": new_db_files}
                 else:
                     # 仅文本内容
-                    user_message = {"role": "user", "content": prompt}
-                
+                    ai_user_message = {"role": "user", "content": prompt}
+                    user_message = ai_user_message
+
+                # messages 存干净版本（存 DB 用），ai_messages 含注入内容（发给 AI 用）
                 messages.append(user_message)
-                
+                ai_messages = messages[:-1] + [ai_user_message]
+
                 # 调用豆包模型
                 chat_func = doubao_chat
-                
+
                 # 构建消息，在开始时添加系统提示词
                 # 对于 personal 分析，添加强制约束以确保第一个回复遵守指令
                 if analysis_type == "personal":
                     # 如果是第一条消息（messages 中只有一条用户消息），添加强制约束
-                    if len(messages) == 1:
+                    if len(ai_messages) == 1:
                         system_prompt += "\n\n【强制约束】你的回复必须立即按照上述指令执行分析步骤，不允许询问澄清或延迟执行。"
-                
-                messages_with_system = [{"role": "system", "content": system_prompt}] + messages
-                
+
+                messages_with_system = [{"role": "system", "content": system_prompt}] + ai_messages
+
                 # 流式输出响应
                 yield f"event: start\ndata: {json.dumps({'conversation_id': conversation_id, 'status': 'started'})}\n\n"
-                
+
                 response_text = ""
                 start_time = time.time()
                 first_token_sent = False
                 print(f"\n[继续分析] 会话ID: {conversation_id}, 类型: {analysis_type}")
-                
+
                 # 不通过 files 参数，因为文件已在 messages 中
                 for chunk in chat_func(messages=messages_with_system, user_id=user_id, think=think, conversation_id=conversation_id):
                     # 处理字典格式（包含 type 和 content）

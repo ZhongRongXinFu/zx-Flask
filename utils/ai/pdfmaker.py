@@ -255,4 +255,5 @@ def parse_pdf_to_markdown(url: str, api_key: str, parse_mode: str = "normal", ti
         if status == "COMPLETED":
             return poll_resp.json().get("data", {}).get("markdown", "")
         if status == "FAILED":
-            raise RuntimeError(f"LAS PDF 解析任务失败，task_id={task_id}")
+            error_detail = poll_resp.json().get("metadata", {}).get("error_message") or poll_resp.text
+            raise RuntimeError(f"LAS PDF 解析任务失败，task_id={task_id}，detail={error_detail}")
