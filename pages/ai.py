@@ -21,10 +21,11 @@ from utils.conversation import (
 from utils.ai.deepseek import chat as deepseek_chat
 from utils.ai.doubao import chat as doubao_chat
 from utils.ai.ai import validate_file_ext, validate_file_size
+from utils.ai.pdfmaker import parse_pdf_to_markdown
 from utils.ai.usage_tracker import AIUsageTracker
 from utils.login import login_required, op_required
 from utils.quota_logger import log_quota_change, get_quota_logs
-from settings import PRODUCT_IMAGE_DIR, AI_QUOTA_DEDUCTION_ENABLED
+from settings import PRODUCT_IMAGE_DIR, AI_QUOTA_DEDUCTION_ENABLED, AI_LAS_API_KEY
 
 import pymysql
 import requests
@@ -69,25 +70,11 @@ ANALYSIS_PROMPTS = {
 如果一个表格中遇到相同的银行，则直接进行余额合并（避免输出过长），
 你必须严格遵循上述指令，第一次回复时必须按照这个格式执行分析，不能有任何偏离，必须严格使用表格的形式输出，贷款余额保留2位小数，必须准确。表格结构为银行、贷款/担保/未结清担保余额、备注（如有），每个表格结尾做一个合计，必须保证数据准确无误，可进行多次运算，但不要输出多余计算内容""",
     
-    "company": """【企业分析模式】
-
-我需要你以企业级专业顾问的身份分析以下文件，请：
-
-1. 进行全面的数据分析和商业价值评估
-2. 识别关键业务指标和风险点
-3. 提供战略性建议和优化方案
-4. 标出需要重点关注的问题
-5. 给出改进建议和实施优先级
-
-分析框架：
-- 概要分析（Executive Summary）
-- 详细分析（Detailed Analysis）
-- 关键指标（Key Metrics）
-- 风险评估（Risk Assessment）
-- 建议方案（Recommendations）
-- 实施计划（Implementation Plan）
-
-请确保分析专业、准确、可操作、具有战略意义。""",
+    "company": """只需要总结未结清的部分，
+列举清楚 银行名称和对应的余额  （同一个 银行核算到一笔） 
+汇总金额也算下
+排列下顺序，标注数字。
+数字需要精准，核算清楚，不能有任何错误 （反复验算 总金额和贷款的机构数 ）""",
     "inquiry": """看看最近半年最后的查询部分，帮我统计一下，统计一下银行名称。那个查询只要帮我
                 查询是统计服务器上看贷款审批，法人代表负责人高管等资信审查
                 最近三个月统计一下，最近6个月也统计一下
@@ -533,6 +520,39 @@ def validate_and_prepare_files(file_urls=None, file_names=None, conversation_id=
     return result
 
 
+_PDF_SIZE_THRESHOLD = 5 * 1024 * 1024  # 5MB
+
+
+def _resolve_large_pdfs(file_objects: list) -> tuple:
+    """
+    检测 ≥5MB 的 PDF，调用 LAS 解析器提取 Markdown 内容。
+    返回 (filtered_file_objects, injected_text)
+    - 成功解析的大 PDF 从 file_objects 中移除，内容合并进 injected_text
+    - 解析失败则 fallback（保留原 file_url，记录日志）
+    """
+    filtered = []
+    injected_parts = []
+
+    for obj in file_objects:
+        is_large_pdf = (
+            obj.get("type") == "file_url"
+            and os.path.splitext(obj.get("original_name", ""))[1].lower() == ".pdf"
+            and obj.get("size", -1) >= _PDF_SIZE_THRESHOLD
+        )
+        if is_large_pdf:
+            try:
+                markdown = parse_pdf_to_markdown(obj["url"], AI_LAS_API_KEY)
+                injected_parts.append(f"【文件内容 - {obj['original_name']}】\n{markdown}\n---")
+                print(f"[LAS PDF] 解析成功: {obj['original_name']} ({obj.get('size', 0) // 1024 // 1024}MB)")
+            except Exception as e:
+                print(f"[LAS PDF fallback] {obj.get('original_name')}: {e}")
+                filtered.append(obj)
+        else:
+            filtered.append(obj)
+
+    return filtered, "\n\n".join(injected_parts)
+
+
 def prepare_files_for_ai_model(file_objects: list) -> dict:
     """
     为AI模型准备文件参数
@@ -808,8 +828,9 @@ def continue_conversation(conversation_id):
                         desc.append(prompt)
                         user_message = {"role": "user", "content": "\n".join([d for d in desc if d]), "files": new_db_files}
                     else:
+                        resolved_files, injected_text = _resolve_large_pdfs(new_file_objects)
                         content = []
-                        for file_obj in new_file_objects:
+                        for file_obj in resolved_files:
                             if file_obj.get("type") == "image_url":
                                 content.append({
                                     "type": "image_url",
@@ -824,7 +845,8 @@ def continue_conversation(conversation_id):
                                         "url": file_obj.get("url")
                                     }
                                 })
-                        content.append({"type": "text", "text": prompt})
+                        final_text = (injected_text + "\n\n" + prompt).strip() if injected_text else prompt
+                        content.append({"type": "text", "text": final_text})
                         user_message = {"role": "user", "content": content, "files": new_db_files}
                 else:
                     user_message = {"role": "user", "content": prompt}
@@ -1860,10 +1882,11 @@ def continue_analysis(conversation_id):
                 # 构建用户消息 - 如果有文件，需要构建多模态内容格式
                 if new_file_objects:
                     # 多模态内容：包含文件URL和文本提示
+                    resolved_files, injected_text = _resolve_large_pdfs(new_file_objects)
                     content = []
-                    
+
                     # 添加文件内容 - 支持图片和文档URL
-                    for file_obj in new_file_objects:
+                    for file_obj in resolved_files:
                         if file_obj.get("type") == "image_url":
                             content.append({
                                 "type": "image_url",
@@ -1878,13 +1901,14 @@ def continue_analysis(conversation_id):
                                     "url": file_obj.get("url")
                                 }
                             })
-                    
+
                     # 添加文本提示
+                    final_text = (injected_text + "\n\n" + prompt).strip() if injected_text else prompt
                     content.append({
                         "type": "text",
-                        "text": prompt
+                        "text": final_text
                     })
-                    
+
                     user_message = {"role": "user", "content": content, "files": new_db_files}
                 else:
                     # 仅文本内容

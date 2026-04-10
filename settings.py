@@ -29,6 +29,7 @@ AI_TENCENT_SECRET_KEY = "Pm398FByb5UkrpcGl6QqaJwbGnAOgqri"
 
 
 AI_HUOSHAN_API_KEY = "6a401bfa-6e6f-44ad-a5b6-e09fe262f592" #company
+AI_LAS_API_KEY = "06addf29-323c-420f-8b7c-69f90577e06c"  # 火山引擎 LAS PDF 解析器
 
 if DEBUG:
     STATIC_FILE_DIR = "./static"

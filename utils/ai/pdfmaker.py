@@ -1,6 +1,7 @@
 import os
 import time
 import uuid
+import requests
 import shutil
 import subprocess
 from pathlib import Path
@@ -197,3 +198,61 @@ def query_task(task_id: str) -> Dict[str, Any]:
 #         print(f"Converted PDF: {pdf_file}")
 #     except Exception as e:
 #         print(f"Error: {e}")
+
+
+# ---- 火山引擎 LAS PDF 解析器 ----
+
+LAS_SUBMIT_URL = "https://operator.las.cn-beijing.volces.com/api/v1/submit"
+LAS_POLL_URL   = "https://operator.las.cn-beijing.volces.com/api/v1/poll"
+
+
+def parse_pdf_to_markdown(url: str, api_key: str, parse_mode: str = "normal", timeout_sec: int = 300) -> str:
+    """
+    调用火山引擎 LAS PDF 解析器，将 PDF URL 解析为 Markdown 文本。
+
+    Args:
+        url: PDF 文件的公网 URL
+        api_key: 火山引擎 API Key（AI_HUOSHAN_API_KEY）
+        parse_mode: "normal"（默认）或 "detail"（深度思考，更慢）
+        timeout_sec: 轮询总超时秒数
+
+    Returns:
+        解析出的 Markdown 字符串
+
+    Raises:
+        RuntimeError: API 调用失败或任务执行失败
+        TimeoutError: 超过 timeout_sec 仍未完成
+    """
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    # 1. Submit
+    resp = requests.post(LAS_SUBMIT_URL, json={
+        "operator_id": "las_pdf_parse_doubao",
+        "operator_version": "v1",
+        "data": {"url": url, "parse_mode": parse_mode}
+    }, headers=headers, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"LAS submit 失败 HTTP {resp.status_code}: {resp.text}")
+    task_id = resp.json().get("metadata", {}).get("task_id")
+    if not task_id:
+        raise RuntimeError(f"LAS submit 未返回 task_id: {resp.text}")
+
+    # 2. Poll
+    start = time.time()
+    while True:
+        time.sleep(2)
+        if time.time() - start > timeout_sec:
+            raise TimeoutError(f"LAS PDF 解析超时（>{timeout_sec}s），task_id={task_id}")
+        poll_resp = requests.post(LAS_POLL_URL, json={
+            "operator_id": "las_pdf_parse_doubao",
+            "operator_version": "v1",
+            "task_id": task_id
+        }, headers=headers, timeout=15)
+        if poll_resp.status_code != 200:
+            raise RuntimeError(f"LAS poll 失败 HTTP {poll_resp.status_code}: {poll_resp.text}")
+        meta = poll_resp.json().get("metadata", {})
+        status = meta.get("task_status")
+        if status == "COMPLETED":
+            return poll_resp.json().get("data", {}).get("markdown", "")
+        if status == "FAILED":
+            raise RuntimeError(f"LAS PDF 解析任务失败，task_id={task_id}")
